@@ -204,14 +204,28 @@ HEADER = html.Div(
                     html.Span("🇱🇮", style={"fontSize": "2rem", "marginRight": "12px"}),
                     html.Div([
                         html.H1("Liechtenstein Dashboard", className="header-title"),
-                        html.P("Wirtschaft · Bevölkerung · Klima · Vaduz", className="header-sub"),
+                        html.P("Wirtschaft · Bevölkerung · Klima · Tourismus", className="header-sub"),
                     ]),
                 ], className="header-left"),
                 html.Div([
-                    html.Div("Datenquellen: World Bank · Open-Meteo", className="header-badge"),
+                    html.Div("Datenquellen: World Bank · Open-Meteo · Eurostat · OSM", className="header-badge"),
                 ], className="header-right"),
             ],
             className="header-content",
+        ),
+        # ── Disclaimer ───────────────────────────────────────────────────────
+        html.Div(
+            [
+                html.I(className="fas fa-info-circle", style={"marginRight": "6px", "opacity": "0.7"}),
+                "Dies ist keine offizielle Seite — Hobby- & Freizeitprojekt. · Für Fragen: ",
+                html.A(
+                    "kontakt [at] daten.li",   # Platzhalter; JS setzt echte Adresse
+                    id="contact-email",
+                    href="#",
+                    className="disclaimer-link",
+                ),
+            ],
+            className="header-disclaimer",
         ),
     ],
     className="app-header",

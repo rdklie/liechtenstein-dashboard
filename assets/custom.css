@@ -88,6 +88,26 @@ body {
   color: #8B949E;
 }
 
+.header-disclaimer {
+  padding: 5px 20px 8px 20px;
+  font-size: 0.72rem;
+  color: #6E7681;
+  border-top: 1px solid #21262D;
+  background: rgba(0,0,0,0.15);
+  letter-spacing: 0.2px;
+}
+
+.disclaimer-link {
+  color: #58A6FF;
+  text-decoration: none;
+  opacity: 0.85;
+}
+
+.disclaimer-link:hover {
+  opacity: 1;
+  text-decoration: underline;
+}
+
 /* ── Main layout ──────────────────────────────────────────────── */
 .main-container { padding: 0 !important; }
 .main-row { min-height: calc(100vh - 100px); }
