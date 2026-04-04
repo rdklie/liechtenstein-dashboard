@@ -1,0 +1,502 @@
+/* ════════════════════════════════════════════════════════════════
+   Liechtenstein Dashboard — Custom CSS
+   Liechtenstein-Farben: Blau #002B7F · Rot #CE1126 · Gold #D4A017
+   ════════════════════════════════════════════════════════════════ */
+
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
+
+/* ════════════════════════════════════════════════════════════════
+   DASH 4 CSS CUSTOM PROPERTIES — Global dark override
+   Dash 4 verwendet --Dash-* Variablen für alle Komponenten.
+   Diese müssen global gesetzt werden, da Dropdown-Menüs als
+   Popovers außerhalb des DOM-Baums gerendert werden.
+   ════════════════════════════════════════════════════════════════ */
+:root {
+  --Dash-Fill-Inverse-Strong:    #161B22;   /* Hintergrund Dropdown & Menü */
+  --Dash-Fill-Interactive-Strong: #58A6FF;  /* Fokus / Hover Akzent        */
+  --Dash-Fill-Interactive-Weak:  rgba(0, 43, 127, 0.25); /* Ausgewählt-BG */
+  --Dash-Fill-Disabled:          #30363D;   /* Deaktiviert                 */
+  --Dash-Stroke-Strong:          #484F58;   /* Rahmen                      */
+  --Dash-Text-Strong:            #E6EDF3;   /* Haupttext                   */
+  --Dash-Text-Weak:              #8B949E;   /* Sekundärtext / Zähler       */
+  --Dash-Text-Disabled:          #8B949E;   /* Placeholder                 */
+  --Dash-Shading-Strong:         rgba(0, 0, 0, 0.60); /* Schatten stark   */
+  --Dash-Shading-Weak:           rgba(0, 0, 0, 0.35); /* Schatten schwach */
+  --Dash-Spacing:                4px;
+}
+
+/* ── Reset & Base ─────────────────────────────────────────────── */
+*, *::before, *::after { box-sizing: border-box; }
+
+body {
+  font-family: 'Inter', sans-serif !important;
+  background-color: #0D1117 !important;
+  color: #E6EDF3 !important;
+  margin: 0;
+  min-height: 100vh;
+}
+
+/* ── App wrapper ──────────────────────────────────────────────── */
+.app-wrapper {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  background-color: #0D1117;
+}
+
+/* ── Header ───────────────────────────────────────────────────── */
+.app-header {
+  position: relative;
+  background: linear-gradient(135deg, #0D1117 0%, #161B22 100%);
+  border-bottom: 1px solid #30363D;
+  overflow: hidden;
+}
+
+.header-flag-blue { height: 5px; background: #002B7F; }
+.header-flag-red  { height: 5px; background: #CE1126; }
+
+.header-content {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 18px 28px;
+}
+
+.header-left { display: flex; align-items: center; gap: 4px; }
+
+.header-title {
+  font-size: 1.5rem !important;
+  font-weight: 700 !important;
+  color: #E6EDF3 !important;
+  margin: 0 !important;
+  letter-spacing: -0.3px;
+}
+
+.header-sub {
+  color: #8B949E;
+  font-size: 0.8rem;
+  margin: 2px 0 0 0;
+  letter-spacing: 0.5px;
+}
+
+.header-badge {
+  background: #161B22;
+  border: 1px solid #30363D;
+  border-radius: 20px;
+  padding: 5px 14px;
+  font-size: 0.75rem;
+  color: #8B949E;
+}
+
+/* ── Main layout ──────────────────────────────────────────────── */
+.main-container { padding: 0 !important; }
+.main-row { min-height: calc(100vh - 100px); }
+
+/* ── Sidebar ──────────────────────────────────────────────────── */
+.sidebar {
+  background-color: #1C2128;
+  border-right: 2px solid #002B7F40;
+  min-height: calc(100vh - 100px);
+  display: flex;
+  flex-direction: column;
+}
+
+.sidebar-flag {
+  height: 4px;
+  background: linear-gradient(90deg, #002B7F 50%, #CE1126 50%);
+}
+
+.sidebar-inner { padding: 20px 16px; flex: 1; }
+
+.sidebar-title {
+  color: #E6EDF3 !important;
+  font-weight: 700 !important;
+  font-size: 0.8rem !important;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  margin-bottom: 14px !important;
+}
+
+/* ── Filter sections ──────────────────────────────────────────── */
+.filter-section { margin-bottom: 16px; }
+
+.filter-label {
+  color: #C9D1D9 !important;
+  font-size: 0.72rem !important;
+  font-weight: 600 !important;
+  text-transform: uppercase;
+  letter-spacing: 0.7px;
+  margin-bottom: 6px !important;
+  display: block;
+}
+
+hr.filter-hr {
+  border: none !important;
+  border-top: 1px solid #30363D !important;
+  margin: 16px 0 !important;
+  opacity: 1;
+}
+
+/* ── Sidebar tab switcher ─────────────────────────────────────── */
+.sidebar-tabs { border: none !important; }
+.sidebar-tabs .tab-content { display: none; }
+
+.stab {
+  background: #0D1117 !important;
+  border: 1px solid #484F58 !important;
+  border-radius: 6px !important;
+  color: #8B949E !important;
+  font-size: 0.72rem !important;
+  padding: 6px 8px !important;
+  margin: 2px 1px !important;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.stab:hover {
+  color: #E6EDF3 !important;
+  border-color: #58A6FF !important;
+  background: #161B22 !important;
+}
+
+.stab-selected {
+  background: #002B7F !important;
+  border-color: #002B7F !important;
+  color: #fff !important;
+  font-weight: 600 !important;
+}
+
+/* ════════════════════════════════════════════════════════════════
+   DASH 4 DROPDOWN — dash-dropdown-* Klassen
+   Die --Dash-* Variablen werden global in :root gesetzt (oben).
+   Hier nur noch strukturelle Feinjustierungen.
+   ════════════════════════════════════════════════════════════════ */
+
+.fl-dropdown {
+  border-radius: 6px;
+  font-size: 0.82rem;
+}
+
+/* Trigger-Button (der sichtbare Dropdown-Knopf) */
+.fl-dropdown .dash-dropdown {
+  background: #161B22 !important;
+  border: 1.5px solid #484F58 !important;
+  border-radius: 6px !important;
+  color: #E6EDF3 !important;
+  font-size: 0.82rem !important;
+  font-family: 'Inter', sans-serif !important;
+  min-height: 34px !important;
+  transition: border-color 0.15s, box-shadow 0.15s !important;
+}
+
+.fl-dropdown .dash-dropdown:hover {
+  border-color: #58A6FF !important;
+}
+
+.fl-dropdown .dash-dropdown:focus {
+  border-color: #58A6FF !important;
+  outline: 1px solid #58A6FF !important;
+  box-shadow: 0 0 0 3px rgba(88,166,255,0.15) !important;
+}
+
+/* Placeholder-Text */
+.fl-dropdown .dash-dropdown-placeholder {
+  color: #8B949E !important;
+}
+
+/* Ausgewählter Wert(e) */
+.fl-dropdown .dash-dropdown-value,
+.fl-dropdown .dash-dropdown-value-item {
+  color: #E6EDF3 !important;
+  font-size: 0.82rem !important;
+}
+
+/* Zähler bei Multi-Select (z.B. "+2") */
+.fl-dropdown .dash-dropdown-value-count {
+  background: rgba(0,43,127,0.35) !important;
+  color: #E6EDF3 !important;
+  border-radius: 4px !important;
+  font-size: 0.72rem !important;
+}
+
+/* Dropdown-Menü (Popover) */
+.dash-dropdown-content {
+  background: #1C2128 !important;
+  border: 1.5px solid #484F58 !important;
+  border-radius: 8px !important;
+  box-shadow: 0 12px 32px rgba(0,0,0,0.65) !important;
+  font-family: 'Inter', sans-serif !important;
+  font-size: 0.82rem !important;
+  z-index: 9999 !important;
+}
+
+/* Suchfeld im Menü */
+.dash-dropdown-search-container {
+  background: #0D1117 !important;
+  border: 1.5px solid #484F58 !important;
+  border-radius: 5px !important;
+  margin: 6px !important;
+}
+
+.dash-dropdown-search-container:focus-within {
+  border-color: #58A6FF !important;
+  outline: 1px solid #58A6FF !important;
+}
+
+.dash-dropdown-search {
+  background: transparent !important;
+  color: #E6EDF3 !important;
+  font-family: 'Inter', sans-serif !important;
+  font-size: 0.82rem !important;
+}
+
+/* Einzelne Optionen */
+.dash-dropdown-option {
+  color: #E6EDF3 !important;
+  font-size: 0.82rem !important;
+  padding: 8px 12px !important;
+  cursor: pointer !important;
+  background: transparent !important;
+  border-radius: 4px !important;
+  transition: background 0.1s !important;
+}
+
+.dash-dropdown-option:hover,
+.dash-dropdown-option[data-highlighted] {
+  background: rgba(88,166,255,0.12) !important;
+  color: #E6EDF3 !important;
+}
+
+.dash-dropdown-option[aria-selected="true"],
+.dash-dropdown-option[data-selected="true"] {
+  background: rgba(0,43,127,0.40) !important;
+  color: #fff !important;
+  font-weight: 500 !important;
+}
+
+/* Aktionen (Alle auswählen, Auswahl löschen) */
+.dash-dropdown-actions { border-top: 1px solid #30363D !important; }
+.dash-dropdown-action-button { color: #8B949E !important; font-size: 0.75rem !important; }
+.dash-dropdown-action-button:hover { color: #58A6FF !important; }
+
+/* ── Checklist — Dash 4 ───────────────────────────────────────── */
+.fl-checklist {
+  background: #161B22;
+  border: 1.5px solid #484F58;
+  border-radius: 6px;
+  padding: 6px 8px;
+}
+
+/* Dash 4 Checklist Wrapper-Klassen */
+.fl-checklist .dash-options-list-option-wrapper {
+  display: flex;
+  align-items: center;
+  padding: 5px 6px;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: background 0.12s;
+  gap: 8px;
+}
+
+.fl-checklist .dash-options-list-option-wrapper:hover {
+  background: rgba(88,166,255,0.08);
+}
+
+.fl-checklist .dash-options-list-option-checkbox {
+  accent-color: #002B7F;
+  width: 15px;
+  height: 15px;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.fl-checklist .dash-options-list-option-text {
+  color: #E6EDF3 !important;
+  font-size: 0.8rem !important;
+  font-family: 'Inter', sans-serif;
+}
+
+/* Fallback für ältere Dash-Versionen (labelClassName="checklist-label") */
+.checklist-label {
+  color: #E6EDF3 !important;
+  font-size: 0.8rem !important;
+  display: flex !important;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 6px !important;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: background 0.12s;
+}
+
+.checklist-label:hover { background: rgba(88,166,255,0.08); }
+
+.checklist-label input[type="checkbox"] {
+  accent-color: #002B7F;
+  width: 15px;
+  height: 15px;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+/* ── Slider ───────────────────────────────────────────────────── */
+.fl-slider .rc-slider-track  { background-color: #002B7F !important; }
+.fl-slider .rc-slider-handle {
+  border-color: #002B7F !important;
+  background-color: #002B7F !important;
+  width: 16px !important;
+  height: 16px !important;
+  margin-top: -6px !important;
+}
+.fl-slider .rc-slider-handle:hover,
+.fl-slider .rc-slider-handle:active { border-color: #58A6FF !important; box-shadow: 0 0 0 4px rgba(88,166,255,0.2) !important; }
+.fl-slider .rc-slider-rail           { background-color: #30363D !important; height: 4px !important; }
+.fl-slider .rc-slider-track          { height: 4px !important; }
+.fl-slider .rc-slider-tooltip-inner  { background-color: #002B7F !important; border: none; font-size: 11px; font-family: Inter,sans-serif; }
+
+/* ── Share URL ────────────────────────────────────────────────── */
+.share-row { display: flex; gap: 6px; align-items: center; }
+
+.share-input {
+  flex: 1;
+  background: #0D1117 !important;
+  border: 1.5px solid #484F58 !important;
+  border-radius: 6px !important;
+  color: #8B949E !important;
+  font-size: 0.7rem !important;
+  padding: 5px 8px !important;
+  font-family: 'Inter', monospace;
+  min-width: 0;
+}
+
+.copy-btn {
+  background: #002B7F !important;
+  border: none !important;
+  border-radius: 6px !important;
+  color: #fff !important;
+  padding: 5px 10px !important;
+  cursor: pointer !important;
+  font-size: 0.75rem !important;
+  flex-shrink: 0;
+}
+.copy-btn:hover { background: #0038A8 !important; }
+
+.copy-feedback { color: #3FB950; font-size: 0.7rem; display: block; margin-top: 4px; min-height: 14px; }
+
+/* ── Tab content area ─────────────────────────────────────────── */
+.tab-content-area {
+  padding: 24px;
+  background-color: #0D1117;
+  min-height: calc(100vh - 100px);
+}
+
+/* ── Section title ────────────────────────────────────────────── */
+.section-title {
+  color: #E6EDF3 !important;
+  font-weight: 600 !important;
+  font-size: 1.05rem !important;
+  margin-bottom: 18px !important;
+  padding-bottom: 8px;
+  border-bottom: 2px solid #002B7F;
+  display: inline-block;
+}
+
+.mt-3 { margin-top: 28px !important; }
+
+/* ── Cards ────────────────────────────────────────────────────── */
+.dash-card {
+  background-color: #161B22;
+  border: 1px solid #30363D;
+  border-radius: 10px;
+  padding: 18px;
+  transition: border-color 0.2s;
+}
+
+.dash-card:hover { border-color: #58A6FF30; }
+
+/* ── KPI cards ────────────────────────────────────────────────── */
+.kpi-card {
+  background-color: #161B22;
+  border: 1px solid #30363D;
+  border-radius: 10px;
+  padding: 16px;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  transition: transform 0.2s, border-color 0.2s;
+}
+
+.kpi-card:hover { transform: translateY(-2px); border-color: #002B7F; }
+
+.kpi-icon {
+  width: 46px;
+  height: 46px;
+  border-radius: 10px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  font-size: 1.1rem;
+}
+
+.kpi-label {
+  color: #8B949E !important;
+  font-size: 0.7rem !important;
+  text-transform: uppercase;
+  letter-spacing: 0.6px;
+  margin: 0 0 4px 0 !important;
+  font-weight: 500;
+}
+
+.kpi-value {
+  color: #E6EDF3 !important;
+  font-size: 1.1rem !important;
+  font-weight: 700 !important;
+  margin: 0 !important;
+  line-height: 1.2;
+}
+
+.kpi-sub { color: #3FB950 !important; font-size: 0.7rem !important; margin-top: 2px; }
+
+/* ── Info card ────────────────────────────────────────────────── */
+.info-card { border-top: 3px solid #002B7F !important; }
+.info-title { color: #E6EDF3 !important; font-weight: 600 !important; font-size: 0.9rem !important; margin-bottom: 14px !important; }
+.info-list  { display: flex; flex-direction: column; gap: 10px; }
+
+.info-row { display: flex; align-items: flex-start; gap: 10px; font-size: 0.82rem; }
+.info-label { color: #8B949E; font-weight: 500; margin-right: 4px; white-space: nowrap; }
+.info-value { color: #E6EDF3; }
+
+/* ── Empty state ──────────────────────────────────────────────── */
+.empty-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 60px 20px;
+  color: #8B949E;
+  text-align: center;
+}
+
+/* ── Source note ──────────────────────────────────────────────── */
+.source-note { color: #484F58 !important; font-size: 0.7rem !important; margin-top: 8px !important; font-style: italic; }
+
+/* ── Plotly charts ────────────────────────────────────────────── */
+.js-plotly-plot .plotly { background: transparent !important; }
+.modebar { background: transparent !important; }
+.modebar-btn { color: #484F58 !important; }
+.modebar-btn:hover { color: #8B949E !important; }
+
+/* ── Scrollbar ────────────────────────────────────────────────── */
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: #0D1117; }
+::-webkit-scrollbar-thumb { background: #30363D; border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: #484F58; }
+
+/* ── Responsive ───────────────────────────────────────────────── */
+@media (max-width: 768px) {
+  .tab-content-area { padding: 14px; }
+  .header-content { padding: 14px 16px; }
+  .header-title { font-size: 1.1rem !important; }
+  .kpi-value { font-size: 0.95rem !important; }
+}
