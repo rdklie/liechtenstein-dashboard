@@ -26,13 +26,15 @@ from data_fetcher import (
     VADUZ_LAT,
     VADUZ_LON,
     MUNICIPALITIES,
-    fetch_weather_monthly,
-    fetch_world_bank,
-    fetch_eurostat_tourism,
-    fetch_eurostat_tourism_nights,
-    fetch_eurostat_gdp_eur,
-    fetch_osm_poi_counts,
     OSM_CATEGORIES,
+)
+from db import (
+    get_world_bank,
+    get_weather_monthly,
+    get_eurostat_tourism,
+    get_eurostat_tourism_nights,
+    get_eurostat_gdp_eur,
+    get_osm_poi_counts,
 )
 
 # ── Constants ────────────────────────────────────────────────────────────────
@@ -535,7 +537,7 @@ app.clientside_callback(
 def _render_overview(data: dict):
     # Fetch latest values for KPI cards
     def _latest(ind):
-        df = fetch_world_bank(ind)
+        df = get_world_bank(ind)
         if df.empty:
             return None, None
         row = df.dropna(subset=["value"]).iloc[-1]
@@ -575,8 +577,8 @@ def _render_overview(data: dict):
     ], className="g-3")
 
     # Mini time series (population)
-    pop_df = fetch_world_bank("SP.POP.TOTL")
-    gdp_df = fetch_world_bank("NY.GDP.MKTP.CD")
+    pop_df = get_world_bank("SP.POP.TOTL")
+    gdp_df = get_world_bank("NY.GDP.MKTP.CD")
 
     pop_fig = go.Figure()
     if not pop_df.empty:
@@ -618,7 +620,7 @@ def _render_overview(data: dict):
     ], "info-card")
 
     # ── OSM Points of Interest ────────────────────────────────────────────────
-    poi_counts = fetch_osm_poi_counts()
+    poi_counts = get_osm_poi_counts()
     poi_section = None
     if poi_counts:
         sorted_pois = sorted(poi_counts.items(), key=lambda x: x[1], reverse=True)
@@ -687,7 +689,7 @@ def _render_economy(data: dict):
     palette = [FL_BLUE, FL_RED, FL_GOLD, ACCENT, "#3FB950", "#BB8FCE", "#F0883E", "#58D68D"]
 
     for i, ind in enumerate(indicators):
-        df = fetch_world_bank(ind)
+        df = get_world_bank(ind)
         if df.empty:
             continue
         df = df[(df["year"] >= y0) & (df["year"] <= y1)]
@@ -716,7 +718,7 @@ def _render_economy(data: dict):
     bar_fig = go.Figure()
     if indicators:
         ind0 = indicators[0]
-        df0 = fetch_world_bank(ind0)
+        df0 = get_world_bank(ind0)
         if not df0.empty:
             df0 = df0[(df0["year"] >= y0) & (df0["year"] <= y1)].tail(10)
             y_vals = df0["value"] / 1e9 if "MKTP" in ind0 else df0["value"]
@@ -817,7 +819,7 @@ def _render_climate(data: dict):
     dfs = {}
     for key in munis:
         info = MUNICIPALITIES.get(key, MUNICIPALITIES["vaduz"])
-        df = fetch_weather_monthly(year, lat=info["lat"], lon=info["lon"])
+        df = get_weather_monthly(key, year, lat=info["lat"], lon=info["lon"])
         if not df.empty:
             dfs[key] = df
 
@@ -998,9 +1000,9 @@ def _render_tourism(data: dict):
     y0, y1 = data.get("tourism_year", [1995, 2024])
 
     # ── Fetch data ────────────────────────────────────────────────────────────
-    arr_df    = fetch_eurostat_tourism()
-    nights_df = fetch_eurostat_tourism_nights()
-    gdp_df    = fetch_eurostat_gdp_eur()
+    arr_df    = get_eurostat_tourism()
+    nights_df = get_eurostat_tourism_nights()
+    gdp_df    = get_eurostat_gdp_eur()
 
     def _filter_years(df):
         if df.empty:
