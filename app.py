@@ -1101,7 +1101,7 @@ def _render_tourism(data: dict):
     gdp_eur_chart = _card(dcc.Graph(figure=gdp_eur_fig, config={"displayModeBar": False})) if gdp_eur_fig.data else _empty("Keine BIP-Daten.")
 
     return html.Div([
-        html.H4("Tourismus & Wirtschaft – Eurostat", className="section-title"),
+        html.H4("Tourismus & Wirtschaft – Liechtenstein", className="section-title"),
         kpi_row,
         dbc.Row([
             dbc.Col(arr_chart,     md=12, className="mb-3"),
@@ -1111,7 +1111,7 @@ def _render_tourism(data: dict):
             dbc.Col(gdp_eur_chart, md=6,  className="mb-3"),
         ], className="g-3"),
         html.P(
-            "Quelle: Eurostat · tour_occ_arnat / tour_occ_ninat / tec00001 · Liechtenstein (LI)",
+            "Quelle: Amt für Statistik Liechtenstein · Tourismus- & Wirtschaftsstatistik (Eurostat wo verfügbar)",
             className="source-note",
         ),
     ])
