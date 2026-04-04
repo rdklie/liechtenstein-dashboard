@@ -24,7 +24,6 @@ services:
   - type: cron
     name: liechtenstein-fetcher
     env: python
-    plan: free
     buildCommand: pip install -r requirements.txt
     startCommand: python worker.py
     schedule: "0 6 * * *"   # täglich um 06:00 UTC
