@@ -498,8 +498,31 @@ hr.filter-hr {
   text-align: center;
 }
 
-/* ── Source note ──────────────────────────────────────────────── */
+/* ── Source note (alt, für Rückwärtskompatibilität) ───────────── */
 .source-note { color: #484F58 !important; font-size: 0.7rem !important; margin-top: 8px !important; font-style: italic; }
+
+/* ── Source bar (neue einheitliche Quellenzeile) ──────────────── */
+.source-bar {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 6px 4px 2px 2px;
+  font-size: 0.72rem;
+  color: #6E7681;
+  flex-wrap: wrap;
+}
+
+.source-link {
+  color: #58A6FF;
+  text-decoration: none;
+  opacity: 0.85;
+  transition: opacity 0.15s;
+}
+
+.source-link:hover {
+  opacity: 1;
+  text-decoration: underline;
+}
 
 /* ── Plotly charts ────────────────────────────────────────────── */
 .js-plotly-plot .plotly { background: transparent !important; }

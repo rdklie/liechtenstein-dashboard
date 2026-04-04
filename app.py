@@ -171,6 +171,40 @@ def _empty(msg="Keine Daten verfügbar"):
     )
 
 
+# Bekannte Datenquellen mit URLs
+SOURCES = {
+    "worldbank":   ("World Bank Open Data",           "https://data.worldbank.org/country/LI"),
+    "openmeteo":   ("Open-Meteo Archive API",         "https://open-meteo.com/"),
+    "amtstat":     ("Amt für Statistik Liechtenstein","https://www.llv.li/de/landesverwaltung/amt-fuer-statistik"),
+    "eurostat":    ("Eurostat",                       "https://ec.europa.eu/eurostat"),
+    "osm":         ("OpenStreetMap",                  "https://www.openstreetmap.org/"),
+    "overpass":    ("Overpass API",                   "https://overpass-api.de/"),
+}
+
+
+def _source_bar(*source_keys: str, extra: str = "") -> html.Div:
+    """
+    Rendert eine einheitliche Quellenzeile mit klickbaren Links.
+    Beispiel: _source_bar("worldbank", "amtstat")
+    """
+    parts = []
+    for i, key in enumerate(source_keys):
+        name, url = SOURCES[key]
+        if i > 0:
+            parts.append(html.Span(" · ", style={"color": BORDER}))
+        parts.append(html.A(
+            name, href=url, target="_blank", rel="noopener noreferrer",
+            className="source-link",
+        ))
+    if extra:
+        parts.append(html.Span(f" · {extra}", style={"color": MUTED}))
+    return html.Div(
+        [html.I(className="fas fa-database", style={"marginRight": "6px", "color": MUTED}),
+         html.Span("Quelle: ", style={"color": MUTED}),
+         *parts],
+        className="source-bar",
+    )
+
 
 def _build_url(store: dict) -> str:
     if not store:
@@ -665,18 +699,36 @@ def _render_overview(data: dict):
         dbc.Col(_card(dcc.Graph(figure=gdp_fig, config={"displayModeBar": False})), md=6, className="mb-3"),
     ], className="g-3")
 
+    # Datenquellen-Übersichtskarte
+    sources_card = _card([
+        html.H5("Datenquellen", className="info-title"),
+        html.Div([
+            _source_info_row("fa-globe",       "World Bank Open Data",            "https://data.worldbank.org/country/LI",         "Wirtschafts- & Bevölkerungsdaten"),
+            _source_info_row("fa-cloud-sun",   "Open-Meteo Archive API",          "https://open-meteo.com/",                       "Historische Klimadaten aller 11 Gemeinden"),
+            _source_info_row("fa-chart-bar",   "Amt für Statistik Liechtenstein", "https://www.llv.li/de/landesverwaltung/amt-fuer-statistik", "Tourismus, Sektoren, Bevölkerung"),
+            _source_info_row("fa-university",  "Eurostat",                        "https://ec.europa.eu/eurostat",                 "BIP & Wirtschaftsstatistik (EWR)"),
+            _source_info_row("fa-map-marked-alt", "OpenStreetMap / Overpass API", "https://www.openstreetmap.org/",               "Points of Interest in Liechtenstein"),
+        ], className="info-list"),
+        html.Small(
+            "Alle Daten werden täglich automatisch aktualisiert. "
+            "Dieses Dashboard ist ein unabhängiges Freizeitprojekt ohne Verbindung zu offiziellen Stellen.",
+            style={"color": MUTED, "display": "block", "marginTop": "10px", "lineHeight": "1.5"},
+        ),
+    ], "info-card")
+
     rows = [
         html.H4("Liechtenstein im Überblick", className="section-title"),
         kpi_row,
         kpi_row2,
         chart_row,
-        dbc.Row([dbc.Col(info, md=12)], className="g-3"),
+        _source_bar("worldbank", extra="Bevölkerung & BIP · letzte verfügbare Jahreswerte"),
+        dbc.Row([dbc.Col(info, md=8), dbc.Col(sources_card, md=4)], className="g-3 mt-1"),
     ]
     if poi_section:
         rows += [
             html.H4("Infrastruktur & Sehenswürdigkeiten", className="section-title mt-3"),
             poi_section,
-            html.P("Quelle: OpenStreetMap / Overpass API · Liechtenstein Bounding Box", className="source-note"),
+            _source_bar("osm", "overpass", extra="Liechtenstein Bounding Box"),
         ]
     return html.Div(rows)
 
@@ -686,6 +738,15 @@ def _info_row(icon, label, value):
         html.I(className=f"fas {icon}", style={"color": FL_BLUE, "width": "18px"}),
         html.Span(label + ":", className="info-label"),
         html.Span(value, className="info-value"),
+    ], className="info-row")
+
+
+def _source_info_row(icon, name, url, description):
+    return html.Div([
+        html.I(className=f"fas {icon}", style={"color": ACCENT, "width": "18px"}),
+        html.A(name, href=url, target="_blank", rel="noopener noreferrer",
+               className="source-link", style={"marginRight": "6px"}),
+        html.Span(f"— {description}", style={"color": MUTED, "fontSize": "0.8rem"}),
     ], className="info-row")
 
 
@@ -807,11 +868,7 @@ def _render_economy(data: dict):
             dbc.Col(_card(dcc.Graph(figure=donut_fig, config={"displayModeBar": False})), md=5, className="mb-3"),
             dbc.Col(_card(dcc.Graph(figure=group_fig, config={"displayModeBar": False})), md=7, className="mb-3"),
         ], className="g-3"),
-        html.P(
-            "Quelle: World Bank Open Data / Amt für Statistik Liechtenstein (Schätzwerte). "
-            "Sektordaten: Amt für Statistik FL, ca. 2022.",
-            className="source-note",
-        ),
+        _source_bar("worldbank", "amtstat", extra="Sektordaten: Amt für Statistik FL, ca. 2022"),
     ])
 
 
@@ -1003,10 +1060,7 @@ def _render_climate(data: dict):
         html.H4(f"Klimadaten – {title_munis} ({year})", className="section-title"),
         kpi_row,
         *charts,
-        html.P(
-            f"Quelle: Open-Meteo Historical Weather API · {source_parts}",
-            className="source-note",
-        ),
+        _source_bar("openmeteo", extra=source_parts),
     ])
 
 
@@ -1110,10 +1164,7 @@ def _render_tourism(data: dict):
             dbc.Col(nights_chart,  md=6,  className="mb-3"),
             dbc.Col(gdp_eur_chart, md=6,  className="mb-3"),
         ], className="g-3"),
-        html.P(
-            "Quelle: Amt für Statistik Liechtenstein · Tourismus- & Wirtschaftsstatistik (Eurostat wo verfügbar)",
-            className="source-note",
-        ),
+        _source_bar("amtstat", "eurostat", extra="Tourismus- & Wirtschaftsstatistik (Eurostat wo verfügbar)"),
     ])
 
 
