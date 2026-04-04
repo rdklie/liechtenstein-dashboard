@@ -47,11 +47,15 @@ def run():
             log.error("  ✗ %s — Fehler: %s", indicator, e)
             errors.append(f"World Bank {indicator}: {e}")
 
-    # ── Klimadaten (alle Gemeinden × letzte 6 Jahre) ──────────────────────────
+    # ── Klimadaten (alle Gemeinden × letzte 5 abgeschlossene Jahre) ─────────────
+    # Nur abgeschlossene Jahre fetchen — laufendes Jahr (2026) ist noch unvollständig
+    # und hat ein erhöhtes Rate-Limit-Risiko bei der Open-Meteo Archive API.
+    # Zwischen jedem Request 1.5s Pause um 429-Fehler zu vermeiden (66 Requests total).
+    import time as _time
     from data_fetcher import MUNICIPALITIES, fetch_weather_monthly
     current_year = datetime.utcnow().year
-    weather_years = list(range(current_year - 5, current_year + 1))
-    log.info("--- Klimadaten (%d Gemeinden × %d Jahre) ---",
+    weather_years = list(range(current_year - 5, current_year))  # nur abgeschlossene Jahre
+    log.info("--- Klimadaten (%d Gemeinden × %d Jahre, je 1.5s Pause) ---",
              len(MUNICIPALITIES), len(weather_years))
     for key, info in MUNICIPALITIES.items():
         for year in weather_years:
@@ -65,6 +69,7 @@ def run():
             except Exception as e:
                 log.error("  ✗ %s %d — Fehler: %s", info["name"], year, e)
                 errors.append(f"Wetter {key} {year}: {e}")
+            _time.sleep(1.5)  # Rate-Limit Open-Meteo: max ~1 Req/s
 
     # ── Eurostat — Tourismus Ankünfte ─────────────────────────────────────────
     log.info("--- Eurostat Tourismus ---")

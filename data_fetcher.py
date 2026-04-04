@@ -382,27 +382,36 @@ def fetch_weather(year: int, lat: float = VADUZ_LAT, lon: float = VADUZ_LON) -> 
         ),
         "timezone": "Europe/Zurich",
     }
-    try:
-        resp = requests.get(url, params=params, timeout=30)
-        resp.raise_for_status()
-        d = resp.json().get("daily", {})
+    import time as _time
+    for attempt in range(3):  # max 3 Versuche bei 429
+        try:
+            resp = requests.get(url, params=params, timeout=30)
+            if resp.status_code == 429:
+                wait = 10 * (attempt + 1)  # 10s, 20s, 30s
+                print(f"[Open-Meteo] 429 — warte {wait}s (Versuch {attempt+1}/3)")
+                _time.sleep(wait)
+                continue
+            resp.raise_for_status()
+            d = resp.json().get("daily", {})
 
-        df = pd.DataFrame({
-            "date":          pd.to_datetime(d.get("time", [])),
-            "temp_max":      d.get("temperature_2m_max", []),
-            "temp_min":      d.get("temperature_2m_min", []),
-            "temp_mean":     d.get("temperature_2m_mean", []),
-            "precipitation": d.get("precipitation_sum", []),
-            "wind_max":      d.get("windspeed_10m_max", []),
-        })
+            df = pd.DataFrame({
+                "date":          pd.to_datetime(d.get("time", [])),
+                "temp_max":      d.get("temperature_2m_max", []),
+                "temp_min":      d.get("temperature_2m_min", []),
+                "temp_mean":     d.get("temperature_2m_mean", []),
+                "precipitation": d.get("precipitation_sum", []),
+                "wind_max":      d.get("windspeed_10m_max", []),
+            })
 
-        cache_rec = df.assign(date=df["date"].dt.strftime("%Y-%m-%d")).to_dict("records")
-        _save_cache(key, cache_rec)
-        return df
+            cache_rec = df.assign(date=df["date"].dt.strftime("%Y-%m-%d")).to_dict("records")
+            _save_cache(key, cache_rec)
+            return df
 
-    except Exception as exc:
-        print(f"[Open-Meteo] year={year} lat={lat} lon={lon} error: {exc}")
-        return pd.DataFrame()
+        except Exception as exc:
+            print(f"[Open-Meteo] year={year} lat={lat} lon={lon} error: {exc}")
+            if attempt < 2:
+                _time.sleep(5)
+    return pd.DataFrame()
 
 
 def fetch_weather_monthly(year: int, lat: float = VADUZ_LAT, lon: float = VADUZ_LON) -> pd.DataFrame:
