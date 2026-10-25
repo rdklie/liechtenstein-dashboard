@@ -1,0 +1,5 @@
+# >>> daten-li (von deploy.ps1 verwaltet)
+CRON_TZ=UTC
+* * * * * $HOME/daten-li/bin/keepalive.sh >/dev/null 2>&1
+0 6 * * * $HOME/daten-li/bin/run-worker.sh
+# <<< daten-li

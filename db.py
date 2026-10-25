@@ -1,9 +1,10 @@
 """
 db.py — Datenbankschicht für das Liechtenstein Dashboard
 =========================================================
-Liest DATABASE_URL aus der Umgebung (Render setzt diese automatisch).
-Lokal ohne DATABASE_URL: alle Funktionen geben leere DataFrames zurück,
-das Dashboard fällt dann automatisch auf direkte API-Aufrufe zurück.
+Standard ist eine SQLite-Datei (Pfad aus SQLITE_PATH, sonst data/liechtenstein.sqlite
+neben dem Code). Optional kann DATABASE_URL (z. B. PostgreSQL) gesetzt werden und
+hat dann Vorrang. Sind noch keine Daten vorhanden, fällt das Dashboard automatisch
+auf direkte API-Aufrufe zurück.
 
 Tabellen:
   world_bank_data       — World Bank Indikatoren
@@ -17,23 +18,41 @@ Tabellen:
 import os
 import logging
 from datetime import datetime
+from functools import lru_cache
+from pathlib import Path
 
 import pandas as pd
-from sqlalchemy import create_engine, text
+from sqlalchemy import create_engine, event, text
 
 log = logging.getLogger(__name__)
 
+DEFAULT_SQLITE_PATH = Path(__file__).resolve().parent / "data" / "liechtenstein.sqlite"
+
 # ── Engine ────────────────────────────────────────────────────────────────────
 
+@lru_cache(maxsize=1)
 def _get_engine():
     url = os.environ.get("DATABASE_URL", "")
-    if not url:
-        return None
-    # Render liefert postgres://, SQLAlchemy braucht postgresql://
-    if url.startswith("postgres://"):
-        url = url.replace("postgres://", "postgresql://", 1)
     try:
-        return create_engine(url, pool_pre_ping=True)
+        if url:
+            # Heroku/Render-Stil postgres:// → postgresql://
+            if url.startswith("postgres://"):
+                url = url.replace("postgres://", "postgresql://", 1)
+            engine = create_engine(url, pool_pre_ping=True)
+        else:
+            path = Path(os.environ.get("SQLITE_PATH") or DEFAULT_SQLITE_PATH)
+            path.parent.mkdir(parents=True, exist_ok=True)
+            engine = create_engine(f"sqlite:///{path.as_posix()}",
+                                   connect_args={"timeout": 30})
+
+            @event.listens_for(engine, "connect")
+            def _sqlite_pragmas(dbapi_conn, _):
+                # WAL: Web liest, während der Worker schreibt
+                dbapi_conn.execute("PRAGMA journal_mode=WAL")
+                dbapi_conn.execute("PRAGMA synchronous=NORMAL")
+
+        _create_tables(engine)
+        return engine
     except Exception as e:
         log.error("DB-Engine Fehler: %s", e)
         return None
@@ -46,7 +65,7 @@ CREATE TABLE IF NOT EXISTS world_bank_data (
     indicator   TEXT    NOT NULL,
     year        INTEGER NOT NULL,
     value       FLOAT,
-    fetched_at  TIMESTAMP DEFAULT NOW(),
+    fetched_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     PRIMARY KEY (indicator, year)
 );
 
@@ -60,48 +79,50 @@ CREATE TABLE IF NOT EXISTS weather_monthly (
     temp_mean     FLOAT,
     precipitation FLOAT,
     wind_max      FLOAT,
-    fetched_at    TIMESTAMP DEFAULT NOW(),
+    fetched_at    TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     PRIMARY KEY (municipality, year, month)
 );
 
 CREATE TABLE IF NOT EXISTS eurostat_tourism (
     year        INTEGER PRIMARY KEY,
     value       FLOAT,
-    fetched_at  TIMESTAMP DEFAULT NOW()
+    fetched_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
 CREATE TABLE IF NOT EXISTS eurostat_tourism_nights (
     year        INTEGER PRIMARY KEY,
     value       FLOAT,
-    fetched_at  TIMESTAMP DEFAULT NOW()
+    fetched_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
 CREATE TABLE IF NOT EXISTS eurostat_gdp_eur (
     year        INTEGER PRIMARY KEY,
     value       FLOAT,
-    fetched_at  TIMESTAMP DEFAULT NOW()
+    fetched_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
 CREATE TABLE IF NOT EXISTS osm_poi_counts (
     category    TEXT PRIMARY KEY,
     count       INTEGER,
-    fetched_at  TIMESTAMP DEFAULT NOW()
+    fetched_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 """
 
 
-def init_db():
-    """Erstellt alle Tabellen falls noch nicht vorhanden."""
-    engine = _get_engine()
-    if engine is None:
-        log.info("Kein DATABASE_URL — DB-Init übersprungen.")
-        return
+def _create_tables(engine):
     with engine.connect() as conn:
         for stmt in DDL.strip().split(";"):
             stmt = stmt.strip()
             if stmt:
                 conn.execute(text(stmt))
         conn.commit()
+
+
+def init_db():
+    """Erstellt alle Tabellen falls noch nicht vorhanden."""
+    if _get_engine() is None:
+        log.error("Keine DB-Engine — DB-Init fehlgeschlagen.")
+        return
     log.info("DB initialisiert.")
 
 
@@ -239,8 +260,8 @@ def read_osm_poi_counts() -> dict[str, int]:
 
 
 # ── Wrapper mit Fallback auf direkte API-Aufrufe ──────────────────────────────
-# Wenn DATABASE_URL gesetzt und Daten vorhanden → DB
-# Sonst → direkt API (für lokale Entwicklung ohne DB)
+# Wenn Daten in der DB vorhanden → DB
+# Sonst → direkt API (z. B. vor dem ersten Worker-Lauf)
 
 def get_world_bank(indicator: str) -> pd.DataFrame:
     df = read_world_bank(indicator)
@@ -286,8 +307,6 @@ def get_eurostat_gdp_eur() -> pd.DataFrame:
 
 
 def get_osm_poi_counts() -> dict[str, int]:
-    counts = read_osm_poi_counts()
-    if counts:
-        return counts
-    from data_fetcher import fetch_osm_poi_counts
-    return fetch_osm_poi_counts()
+    # Kein Live-Fallback: Overpass braucht über eine Minute (und ist oft nicht
+    # erreichbar) — das würde das Rendern der Seite blockieren. Der Worker füllt die DB.
+    return read_osm_poi_counts()

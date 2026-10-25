@@ -15,8 +15,8 @@ from datetime import datetime, timedelta, date
 from pathlib import Path
 
 # ── Config ──────────────────────────────────────────────────────────────────
-CACHE_DIR = Path("cache_data")
-CACHE_DIR.mkdir(exist_ok=True)
+CACHE_DIR = Path(os.environ.get("CACHE_DIR") or Path(__file__).resolve().parent / "cache_data")
+CACHE_DIR.mkdir(parents=True, exist_ok=True)
 
 VADUZ_LAT = 47.1415
 VADUZ_LON = 9.5215
@@ -368,9 +368,14 @@ def fetch_osm_poi_counts() -> dict[str, int]:
 
     import time as _time
     results = {}
+    failed_in_a_row = 0
     overpass_url = "https://overpass-api.de/api/interpreter"
 
     for label, query_node in OSM_CATEGORIES.items():
+        if failed_in_a_row >= 2:
+            # Overpass nicht erreichbar/blockiert (502, Timeouts): nicht noch 13x warten
+            print("[OSM] Overpass nicht erreichbar — breche ab")
+            break
         overpass_query = f"""
 [out:json][timeout:25];
 area["ISO3166-1"="LI"][admin_level=2]->.li;
@@ -395,16 +400,18 @@ out count;
                 data = resp.json()
                 count = data.get("elements", [{}])[0].get("tags", {}).get("total", 0)
                 results[label] = int(count)
+                failed_in_a_row = 0
                 break
             except Exception as exc:
                 print(f"[OSM] {label} error (Versuch {attempt+1}): {exc}")
                 if attempt < 2:
                     _time.sleep(10)
                 else:
-                    results[label] = 0
+                    failed_in_a_row += 1
 
-    if any(v > 0 for v in results.values()):
-        _save_cache("osm_poi_counts_LI", results)
+    if not any(v > 0 for v in results.values()):
+        return {}  # nur Fehlschläge/Nullen: nichts speichern, bestehende Daten behalten
+    _save_cache("osm_poi_counts_LI", results)
     return results
 
 

@@ -1,11 +1,11 @@
 """
 worker.py — Datenfetcher-Job für das Liechtenstein Dashboard
 =============================================================
-Wird auf Render als Cron Job täglich ausgeführt.
-Holt Daten von allen externen APIs und speichert sie in der PostgreSQL-DB.
+Läuft täglich als Cron Job (auf cyon: 06:00 UTC, siehe deploy/).
+Holt Daten von allen externen APIs und speichert sie in der SQLite-DB.
 
 Lokal ausführen:
-    DATABASE_URL=postgresql://... python worker.py
+    SQLITE_PATH=/pfad/zur/db.sqlite python worker.py
 """
 
 import logging

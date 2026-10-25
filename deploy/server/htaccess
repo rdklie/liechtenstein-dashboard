@@ -1,0 +1,23 @@
+# daten.li -> lokaler gunicorn (siehe deploy/server/keepalive.sh)
+Options -Indexes
+RewriteEngine On
+
+# Zertifikats-Validierung (Let's Encrypt/AutoSSL) nie umleiten oder proxyen
+RewriteRule ^\.well-known/ - [L]
+
+# HTTPS erzwingen (erst aktiv mit deploy.ps1 -ForceHttps, nachdem das Zertifikat im cyon-Panel installiert ist)
+#FORCE_HTTPS#RewriteCond %{HTTPS} !=on
+#FORCE_HTTPS#RewriteCond %{HTTP:X-Forwarded-Proto} !=https
+#FORCE_HTTPS#RewriteRule ^ https://%{HTTP_HOST}%{REQUEST_URI} [L,R=301]
+
+# Alte Domains und www auf daten.li
+RewriteCond %{HTTP_HOST} ^(www\.daten\.li|(www\.)?dataportal\.li|(www\.)?datenportal\.li)$ [NC]
+RewriteRule ^(.*)$ https://daten.li/$1 [R=301,L]
+
+# Rest an gunicorn
+RewriteCond %{REQUEST_URI} !^/cgi-bin/
+RewriteRule ^(.*)$ http://127.0.0.1:38517/$1 [P,L]
+
+Header always set X-Content-Type-Options "nosniff"
+Header always set Referrer-Policy "same-origin"
+#FORCE_HTTPS#Header always set Strict-Transport-Security "max-age=31536000"
