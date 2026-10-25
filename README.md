@@ -59,9 +59,10 @@ ausgestellt/erneuert (AutoSSL ist per SSH nicht verfügbar). `deploy.ps1 -ForceH
 HTTP→HTTPS-Weiterleitung und HSTS (nur verwenden, solange ein gültiges Zertifikat installiert ist); `/.well-known/`
 bleibt für die Validierung frei. daten.li, dataportal.li und datenportal.li liefern gleichwertig dasselbe Dashboard aus (keine festen Hostnamen in der App); `www.` leitet jeweils auf die Domain ohne `www.`.
 
-**OpenStreetMap:** `overpass-api.de` lehnt automatisierte Abfragen derzeit mit 502 ab. Der Worker bricht dann nach zwei
-fehlgeschlagenen Kategorien ab und lässt bestehende `osm_poi_counts` unverändert; ohne Daten blendet das Dashboard den
-POI-Abschnitt aus. Die Seite ruft Overpass nie live auf.
+**OpenStreetMap:** `overpass-api.de` lehnt automatisierte Abfragen teils mit 502 ab, deshalb fragt der Worker zuerst
+`overpass.osm.ch` (deckt Liechtenstein ab) und fällt auf `overpass-api.de` zurück. Schlägt alles fehl, bricht er nach zwei
+Kategorien ab und lässt bestehende `osm_poi_counts` unverändert. Die Seite ruft Overpass nie live auf; ohne Daten
+blendet das Dashboard den POI-Abschnitt aus.
 
 **Render:** `render.yaml` ist nur noch Archiv der alten Einrichtung; Web-Service, Cron und Postgres bei Render
 werden nicht mehr gebraucht.

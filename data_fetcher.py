@@ -180,7 +180,7 @@ def _eurostat_fetch(dataset: str, params: dict) -> dict:
             f"{EUROSTAT_BASE}/{dataset}",
             params={"format": "JSON", "lang": "EN", **params},
             timeout=30,
-            headers={"User-Agent": "LiechtensteinDashboard/1.0"},
+            headers={"User-Agent": "LiechtensteinDashboard/1.0 (https://daten.li)"},
         )
         resp.raise_for_status()
         data = resp.json()
@@ -360,6 +360,13 @@ OSM_CATEGORIES = {
     "Spielplätze":        'node["leisure"="playground"]',
 }
 
+# overpass-api.de lehnt automatisierte Abfragen teils mit 502 ab; die Schweizer
+# Instanz (deckt Liechtenstein ab) antwortet zuverlässig und ist daher zuerst dran.
+OVERPASS_URLS = [
+    "https://overpass.osm.ch/api/interpreter",
+    "https://overpass-api.de/api/interpreter",
+]
+
 def fetch_osm_poi_counts() -> dict[str, int]:
     """Fetch POI counts per category for Liechtenstein from Overpass API."""
     cached = _load_cache("osm_poi_counts_LI", ttl_hours=168)  # 1 Woche
@@ -369,7 +376,6 @@ def fetch_osm_poi_counts() -> dict[str, int]:
     import time as _time
     results = {}
     failed_in_a_row = 0
-    overpass_url = "https://overpass-api.de/api/interpreter"
 
     for label, query_node in OSM_CATEGORIES.items():
         if failed_in_a_row >= 2:
@@ -383,13 +389,14 @@ area["ISO3166-1"="LI"][admin_level=2]->.li;
 out count;
 """
         for attempt in range(3):
+            overpass_url = OVERPASS_URLS[attempt % len(OVERPASS_URLS)]
             try:
                 _time.sleep(2)  # Overpass Rate-Limit: min. 1 Req/s, wir nehmen 2s Abstand
                 resp = requests.post(
                     overpass_url,
                     data={"data": overpass_query},
                     timeout=30,
-                    headers={"User-Agent": "LiechtensteinDashboard/1.0"},
+                    headers={"User-Agent": "LiechtensteinDashboard/1.0 (https://daten.li)"},
                 )
                 if resp.status_code in (429, 504):
                     wait = 15 * (attempt + 1)
