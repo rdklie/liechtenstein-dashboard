@@ -10,9 +10,9 @@ RewriteRule ^\.well-known/ - [L]
 #FORCE_HTTPS#RewriteCond %{HTTP:X-Forwarded-Proto} !=https
 #FORCE_HTTPS#RewriteRule ^ https://%{HTTP_HOST}%{REQUEST_URI} [L,R=301]
 
-# Alte Domains und www auf daten.li
-RewriteCond %{HTTP_HOST} ^(www\.daten\.li|(www\.)?dataportal\.li|(www\.)?datenportal\.li)$ [NC]
-RewriteRule ^(.*)$ https://daten.li/$1 [R=301,L]
+# www.<domain> -> <domain> (daten.li, dataportal.li, datenportal.li liefern gleichwertig aus)
+RewriteCond %{HTTP_HOST} ^www\.(.+)$ [NC]
+RewriteRule ^(.*)$ https://%1/$1 [R=301,L]
 
 # Rest an gunicorn
 RewriteCond %{REQUEST_URI} !^/cgi-bin/

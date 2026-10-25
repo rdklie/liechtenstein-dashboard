@@ -57,7 +57,7 @@ Manuell: `ssh … '~/daten-li/bin/run-worker.sh'` (dauert ca. 3 Min., Log in `~/
 **HTTPS:** Das Let's-Encrypt-Zertifikat (daten.li, www.daten.li, dataportal.li, datenportal.li) wird im cyon-Panel
 ausgestellt/erneuert (AutoSSL ist per SSH nicht verfügbar). `deploy.ps1 -ForceHttps` schreibt die `.htaccess` mit
 HTTP→HTTPS-Weiterleitung und HSTS (nur verwenden, solange ein gültiges Zertifikat installiert ist); `/.well-known/`
-bleibt für die Validierung frei. www.daten.li, dataportal.li und datenportal.li leiten auf https://daten.li.
+bleibt für die Validierung frei. daten.li, dataportal.li und datenportal.li liefern gleichwertig dasselbe Dashboard aus (keine festen Hostnamen in der App); `www.` leitet jeweils auf die Domain ohne `www.`.
 
 **OpenStreetMap:** `overpass-api.de` lehnt automatisierte Abfragen derzeit mit 502 ab. Der Worker bricht dann nach zwei
 fehlgeschlagenen Kategorien ab und lässt bestehende `osm_poi_counts` unverändert; ohne Daten blendet das Dashboard den
