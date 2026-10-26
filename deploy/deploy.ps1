@@ -30,7 +30,7 @@ $Pkg     = Join-Path $env:TEMP 'daten-li-deploy.tgz'
 Write-Host '1/5 Paket schnueren ...'
 Remove-Item $Pkg -ErrorAction SilentlyContinue
 Push-Location $Root
-tar -czf $Pkg app.py ui.py tab_wohnen.py tab_opendata.py tab_factbook.py tab_imf.py tab_migration.py migration.py tab_police.py police.py opendata.py imf.py factbook_import.py discover.py data_fetcher.py db.py worker.py requirements.txt assets deploy/server
+tar -czf $Pkg app.py ui.py tab_wohnen.py tab_opendata.py tab_factbook.py tab_imf.py tab_migration.py migration.py tab_police.py police.py climate.py tab_klima.py opendata.py imf.py factbook_import.py discover.py data_fetcher.py db.py worker.py requirements.txt assets deploy/server
 if ($LASTEXITCODE -ne 0) { throw 'tar fehlgeschlagen' }
 Pop-Location
 
@@ -47,8 +47,8 @@ cd $B/_staging && tar -xzf pkg.tgz
 sed -i 's/\r$//' deploy/server/*   # Sicherheitsnetz gegen CRLF aus Windows
 mkdir -p $B/app $B/bin $B/data $B/cache $B/logs
 chmod 700 $B $B/data
-rsync -a --delete --exclude=__pycache__ app.py ui.py tab_wohnen.py tab_opendata.py tab_factbook.py tab_imf.py tab_migration.py migration.py tab_police.py police.py opendata.py imf.py factbook_import.py discover.py data_fetcher.py db.py worker.py requirements.txt assets $B/app/
-install -m 755 deploy/server/keepalive.sh deploy/server/stop.sh deploy/server/run-worker.sh deploy/server/run-discover.sh deploy/server/run-factbook-import.sh deploy/server/run-police-import.sh $B/bin/
+rsync -a --delete --exclude=__pycache__ app.py ui.py tab_wohnen.py tab_opendata.py tab_factbook.py tab_imf.py tab_migration.py migration.py tab_police.py police.py climate.py tab_klima.py opendata.py imf.py factbook_import.py discover.py data_fetcher.py db.py worker.py requirements.txt assets $B/app/
+install -m 755 deploy/server/keepalive.sh deploy/server/stop.sh deploy/server/run-worker.sh deploy/server/run-discover.sh deploy/server/run-factbook-import.sh deploy/server/run-police-import.sh deploy/server/run-climate-import.sh $B/bin/
 
 # venv + Abhaengigkeiten (nur bei geaenderter requirements.txt)
 [ -x $B/venv/bin/python ] || /opt/alt/python311/bin/python3.11 -m venv $B/venv

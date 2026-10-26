@@ -16,6 +16,7 @@ Live unter <https://daten.li>.
 | `tab_imf.py`, `imf.py` | Tab «IWF» (World Economic Outlook, DataMapper API) |
 | `tab_migration.py`, `migration.py` | Tab «Migration»: Anteile, Liechtenstein im Detail, Wanderung/Einbürgerung/Asyl, Straffälligkeit |
 | `tab_police.py`, `police.py` | Tab «Polizeistatistik»: Jahresberichte der Landespolizei (Import/Parser) + Eurostat-Kriminalität nach Staatsangehörigkeit |
+| `tab_klima.py`, `climate.py` | Tab «Klimawandel»: ERA5-Langzeitreihen je Gemeinde (Open-Meteo-Archiv), Kennzahlen, Trends |
 | `ui.py` | Gemeinsame Farben/Diagramm-Helfer |
 | `deploy/` | Deployment nach cyon |
 
@@ -107,6 +108,18 @@ Sachlich und quellenbasiert; zu jeder Kennzahl Definition, Quelle, Lizenz und St
   Fliesstext. Reihen werden nicht über solche Brüche verbunden.
 - **Eurostat-Ländervergleich** (aus dem Tab «Migration» verschoben): `crim_just_ctz`, Raten je Gruppe, Methodikkasten; Vergleich nur innerhalb eines Landes, kein Ranking.
 - Lizenz Landespolizei: öffentlich zugängliche amtliche Publikation ohne ausdrückliche Lizenzangabe → nur Kennzahlen mit Quellen-/Seitenangabe, keine Textübernahme.
+
+## Klimawandel je Gemeinde (Tab «Klimawandel»)
+
+- **Daten:** Open-Meteo Historical Weather API, Modell ERA5 (ECMWF/Copernicus; CC BY 4.0), tägliche Werte ab 1950 (Tmean/Tmax/Tmin, Niederschlag, Schneefall) für die
+  Koordinaten der 11 Gemeinden. `climate.py`: einmalige Ladung in 5-Jahres-Abschnitten (176 Abrufe, 20 s Pause, Backoff bei HTTP 429; Skript
+  `~/daten-li/bin/run-climate-import.sh`, setzt fort), danach ergänzt der tägliche Worker fehlende abgeschlossene Jahre (max. 3 Abrufe je Lauf, bei 429 Abbruch).
+  Rohantworten: `~/daten-li/data/archive/climate/<gemeinde>_<von>-<bis>.json.gz`; Tageswerte komprimiert in `clim_daily`, Jahreskennzahlen in `clim_annual`.
+- **Auswertung:** Warming Stripes (Abweichung vom Mittel 1991–2020 je Gemeinde), Hitze-/Sommer-/Frost-/Eis-/Schneefall-/Starkregentage, Jahresniederschlag/-schnee,
+  Trends nach Theil-Sen mit Mann-Kendall-Test (eigene numpy-Implementierung), Talgemeinden (< 600 m) vs. Berggemeinden (Triesenberg, Planken).
+- **Auflösung ehrlich gekennzeichnet:** ERA5 ≈ 25–30 km Raster; Open-Meteo liefert die Höhe seines Höhenmodells am Punkt (z. B. Triesenberg 1042 m statt 884 m) und die Temperaturen
+  unterscheiden sich im Mass der Höhenunterschiede (≈ 5–6 K/km) → Höhenkorrektur der Temperatur durch Open-Meteo wahrscheinlich; Niederschlag/Schnee als Rasterwerte. Wir korrigieren nicht nach,
+  zeigen aber die Rasterpunkt-Höhe in der Trendtabelle.
 
 ## Lokal starten
 

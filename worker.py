@@ -186,6 +186,15 @@ def run():
             log.error("  ✗ %s — Fehler: %s", label, e)
             errors.append(f"Explorer {label}: {e}")
 
+    # ── Klimaarchiv (ERA5/Open-Meteo): fehlende Jahre in kleinen Schritten, bei 429 Abbruch bis zum nächsten Lauf ──
+    try:
+        import climate
+        done, left = climate.load_missing(max_requests=3, pause=15)
+        log.info("--- Klimaarchiv: %d Abschnitte geladen, %d fehlen noch ---", done, left)
+    except Exception as e:
+        log.error("  ✗ Klimaarchiv — Fehler: %s", e)
+        errors.append(f"Klimaarchiv: {e}")
+
     # ── Zusammenfassung ───────────────────────────────────────────────────────
     log.info("=" * 60)
     if errors:

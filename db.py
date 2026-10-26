@@ -21,6 +21,8 @@ Tabellen:
   police_metrics        — Kennzahlen aus den Jahresberichten der Landespolizei (mit Seite und Quelltext je Wert)
   police_delikte        — Deliktsgruppen-Tabelle (soweit als Text lesbar)
   police_reports        — Berichtsdateien (URL, SHA-256, Abrufdatum, Fehler)
+  clim_daily            — ERA5-Tageswerte je Gemeinde und Jahr (Open-Meteo), komprimiert
+  clim_annual           — daraus berechnete Jahreskennzahlen (Hitzetage, Frosttage, …)
   imf_data              — IWF DataMapper: Indikatoren für Liechtenstein (falls vorhanden)
 """
 
@@ -214,6 +216,33 @@ CREATE TABLE IF NOT EXISTS police_reports (
     pages       INTEGER,
     retrieved   TEXT,
     error       TEXT
+);
+
+CREATE TABLE IF NOT EXISTS clim_daily (
+    muni        TEXT    NOT NULL,
+    year        INTEGER NOT NULL,
+    elevation   FLOAT,
+    payload     TEXT,
+    PRIMARY KEY (muni, year)
+);
+
+CREATE TABLE IF NOT EXISTS clim_annual (
+    muni        TEXT    NOT NULL,
+    year        INTEGER NOT NULL,
+    elevation   FLOAT,
+    n_days      INTEGER,
+    tmean       FLOAT,
+    tmax_mean   FLOAT,
+    tmin_mean   FLOAT,
+    hot_days    INTEGER,
+    summer_days INTEGER,
+    frost_days  INTEGER,
+    ice_days    INTEGER,
+    snow_days   INTEGER,
+    heavy_rain_days INTEGER,
+    prec        FLOAT,
+    snow        FLOAT,
+    PRIMARY KEY (muni, year)
 );
 
 CREATE TABLE IF NOT EXISTS imf_meta (
@@ -556,6 +585,44 @@ def read_police_delikte() -> pd.DataFrame:
 
 def read_police_reports() -> pd.DataFrame:
     return _read("SELECT * FROM police_reports ORDER BY year")
+
+
+def read_clim_years() -> set:
+    d = _read("SELECT muni, year FROM clim_daily")
+    return set(zip(d["muni"], d["year"].astype(int))) if not d.empty else set()
+
+
+def write_clim_daily(df: pd.DataFrame):
+    engine = _get_engine()
+    if engine is None or df.empty:
+        return
+    with engine.connect() as conn:
+        for r in df.itertuples():
+            conn.execute(text("DELETE FROM clim_daily WHERE muni = :m AND year = :y"), {"m": r.muni, "y": int(r.year)})
+        conn.commit()
+    df.to_sql("clim_daily", engine, if_exists="append", index=False, method="multi", chunksize=50)
+
+
+def read_clim_daily_all() -> pd.DataFrame:
+    return _read("SELECT muni, year, elevation, payload FROM clim_daily ORDER BY muni, year")
+
+
+def read_clim_daily(muni: str) -> pd.DataFrame:
+    return _read("SELECT year, payload FROM clim_daily WHERE muni = :m ORDER BY year", {"m": muni})
+
+
+def write_clim_annual(df: pd.DataFrame):
+    engine = _get_engine()
+    if engine is None or df.empty:
+        return
+    with engine.connect() as conn:
+        conn.execute(text("DELETE FROM clim_annual"))
+        conn.commit()
+    df.to_sql("clim_annual", engine, if_exists="append", index=False, method="multi", chunksize=200)
+
+
+def read_clim_annual() -> pd.DataFrame:
+    return _read("SELECT * FROM clim_annual ORDER BY muni, year")
 
 
 def write_imf(df: pd.DataFrame, indicator: str):
