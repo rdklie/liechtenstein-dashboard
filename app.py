@@ -30,7 +30,7 @@ from data_fetcher import (
 )
 from ui import (
     FL_BLUE, FL_RED, FL_GOLD, FL_BLUE_10, FL_BLUE_13, FL_RED_13,
-    BG, SURFACE, SURFACE2, BORDER, TEXT, MUTED, GREEN, ACCENT, MUNI_PALETTE,
+    EXP_ORANGE, BG, SURFACE, SURFACE2, BORDER, TEXT, MUTED, GREEN, ACCENT, MUNI_PALETTE,
     SOURCES, _styled, _card, _kpi, _empty, _source_bar,
 )
 import tab_factbook
@@ -139,7 +139,11 @@ HEADER = html.Div(
                     html.Span("🇱🇮", style={"fontSize": "2rem", "marginRight": "12px"}),
                     html.Div([
                         html.H1("Liechtenstein Dashboard", className="header-title"),
-                        html.P("Wirtschaft · Bevölkerung · Klima · Tourismus · Wohnen · Open Data · Factbook · IWF · Migration · Polizeistatistik · Klimawandel · Korrelations-Labor · Prognosen", className="header-sub"),
+                        html.P([
+                            "Wirtschaft · Bevölkerung · Klima · Tourismus · Wohnen · Open Data · Factbook · IWF · Migration · Polizeistatistik · ",
+                            html.A("Politik ↗", href="https://faktencheck.li", target="_blank", rel="noopener noreferrer", className="header-ext-link"),
+                            html.Span(" · Klimawandel · Korrelations-Labor · Prognosen (experimentell)", className="header-exp"),
+                        ], className="header-sub"),
                     ]),
                 ], className="header-left"),
                 html.Div([
@@ -196,9 +200,10 @@ def _build_sidebar() -> html.Div:
                                 dcc.Tab(label="IWF",        value="imf",        className="stab", selected_className="stab-selected"),
                                 dcc.Tab(label="Migration",  value="migration",  className="stab", selected_className="stab-selected"),
                                 dcc.Tab(label="Polizeistatistik", value="polizei", className="stab", selected_className="stab-selected"),
-                                dcc.Tab(label="Klimawandel", value="klimawandel", className="stab", selected_className="stab-selected"),
-                                dcc.Tab(label="Korrelations-Labor", value="korrelation", className="stab", selected_className="stab-selected"),
-                                dcc.Tab(label="Prognosen", value="prognose", className="stab", selected_className="stab-selected"),
+                                dcc.Tab(label="Politik ↗", value="politik", className="stab stab-politik", selected_className="stab-selected"),
+                                dcc.Tab(label="Klimawandel", value="klimawandel", className="stab stab-exp", selected_className="stab-selected stab-exp-selected"),
+                                dcc.Tab(label="Korrelations-Labor", value="korrelation", className="stab stab-exp", selected_className="stab-selected stab-exp-selected"),
+                                dcc.Tab(label="Prognosen", value="prognose", className="stab stab-exp", selected_className="stab-selected stab-exp-selected"),
                             ],
                         ),
                     ], className="filter-section"),
@@ -495,12 +500,14 @@ def render_content(tab, year, indicators, weather_year, weather_vars, municipali
         "kor_a": kor_a, "kor_b": kor_b, "kor_how": kor_how, "kor_lag": kor_lag,
         "fc_series": fc_series, "fc_thr": fc_thr, "fc_opts": fc_opts,
     }
-    if data["tab"] == "prognose":
-        return tab_prognose.render_prognose(data)
+    if data["tab"] == "politik":
+        return _render_politik()
+    elif data["tab"] == "prognose":
+        return _with_exp_notice(tab_prognose.render_prognose(data))
     elif data["tab"] == "korrelation":
-        return tab_korrelation.render_korrelation(data)
+        return _with_exp_notice(tab_korrelation.render_korrelation(data))
     elif data["tab"] == "klimawandel":
-        return tab_klima.render_klima(data)
+        return _with_exp_notice(tab_klima.render_klima(data))
     elif data["tab"] == "polizei":
         return tab_police.render_police(data)
     elif data["tab"] == "migration":
@@ -557,6 +564,68 @@ app.clientside_callback(
     Input("copy-btn",       "n_clicks"),
     prevent_initial_call=True,
 )
+
+
+# ── Bereiche: extern (Politik) und «experimentell» ────────────────────────────
+
+POLITIK_URL = "https://faktencheck.li"
+EXP_TEXT = ("Experimentell heisst: Auswertungen und Modelle im Test. Ergebnisse mit Vorsicht lesen; "
+            "es sind keine amtlichen Zahlen und keine Vorhersagen.")
+
+# (Bezeichnung, tab-Wert, Beschreibung, Art)  Art: "" | "ext" | "exp"
+AREAS = [
+    ("Wirtschaft", "wirtschaft", "BIP, Bevölkerung und weitere Weltbank-Indikatoren", ""),
+    ("Klima", "klima", "Wetter und Temperaturen je Gemeinde", ""),
+    ("Tourismus", "tourismus", "Ankünfte und Übernachtungen", ""),
+    ("Wohnen", "wohnen", "Wohnungsbestand, Mieten, Bautätigkeit", ""),
+    ("Open Data", "opendata", "Explorer für opendata.li, FMA-Dateien und Katalog", ""),
+    ("Factbook", "factbook", "CIA World Factbook, Archiv 1990–2025", ""),
+    ("IWF", "imf", "World Economic Outlook für Liechtenstein", ""),
+    ("Migration", "migration", "Anteile, Einbürgerung, Asyl, Zu- und Abwanderung", ""),
+    ("Polizeistatistik", "polizei", "Jahresberichte der Landespolizei 2009–2025", ""),
+    ("Politik", "politik", "Externes Angebot faktencheck.li, öffnet in neuem Tab", "ext"),
+    ("Klimawandel", "klimawandel", "ERA5-Langzeitreihen je Gemeinde, Trends, Warming Stripes", "exp"),
+    ("Korrelations-Labor", "korrelation", "Zwei Reihen vergleichen: Korrelation, Zeitverschiebung", "exp"),
+    ("Prognosen", "prognose", "Projektionen mit Unsicherheitsband und Rückwärtstest", "exp"),
+]
+
+
+def _exp_badge(text="experimentell"):
+    return html.Span(text, className="exp-badge")
+
+
+def _with_exp_notice(content):
+    notice = html.Div([html.I(className="fas fa-flask", style={"marginRight": "8px", "color": EXP_ORANGE}),
+                       _exp_badge(), html.Span(" " + EXP_TEXT, style={"color": TEXT})], className="exp-notice")
+    return html.Div([notice, content])
+
+
+def _render_politik():
+    return html.Div([
+        html.H4("Politik", className="section-title"),
+        _card([html.P("Dieser Bereich ist ein externer Link und hat keinen eigenen Inhalt im Dashboard.", style={"color": MUTED}),
+               html.A(["faktencheck.li ", html.Span("↗")], href=POLITIK_URL, target="_blank", rel="noopener noreferrer", className="source-link")]),
+    ])
+
+
+def _areas_card():
+    items = []
+    for label, val, desc, kind in AREAS:
+        if kind == "ext":
+            link = html.A([label, " ", html.Span("↗", title="Externer Link")], href=POLITIK_URL, target="_blank", rel="noopener noreferrer", className="area-link")
+        else:
+            link = html.A(label, href=f"/?tab={val}", className="area-link" + (" area-exp" if kind == "exp" else ""))
+        items.append(dbc.Col(html.Div([
+            html.Div([link, _exp_badge() if kind == "exp" else None, html.Span("extern", className="ext-badge") if kind == "ext" else None], className="area-head"),
+            html.Div(desc, className="area-desc"),
+        ], className="area-item" + (" area-item-exp" if kind == "exp" else "")), lg=4, md=6, className="mb-2"))
+    return _card([
+        html.H5("Bereiche", className="info-title"),
+        dbc.Row(items, className="g-2"),
+        html.Div([html.I(className="fas fa-flask", style={"marginRight": "8px", "color": EXP_ORANGE}),
+                  html.B("Was heisst «experimentell»? ", style={"color": EXP_ORANGE}), html.Span(EXP_TEXT)],
+                 className="exp-explain"),
+    ], "info-card")
 
 
 # ── Tab renderers ─────────────────────────────────────────────────────────────
@@ -703,6 +772,8 @@ def _render_overview(data: dict):
 
     rows = [
         html.H4("Liechtenstein im Überblick", className="section-title"),
+        _areas_card(),
+        html.Div(style={"height": "12px"}),
         kpi_row,
         kpi_row2,
         chart_row,

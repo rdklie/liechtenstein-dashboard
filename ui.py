@@ -11,6 +11,7 @@ from dash import dcc, html
 FL_BLUE   = "#002B7F"
 FL_RED    = "#CE1126"
 FL_GOLD   = "#D4A017"
+EXP_ORANGE = "#F0883E"   # «experimentell»-Akzent (gleiche Familie wie die Palette)
 
 # rgba-Varianten für Plotly-fillcolor (Plotly 6 akzeptiert kein 8-stelliges Hex)
 FL_BLUE_10 = "rgba(0,43,127,0.10)"

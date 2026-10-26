@@ -571,3 +571,31 @@ hr.filter-hr {
 /* Sechs Bereiche: Tab-Leiste in der Sidebar umbrechen statt abschneiden */
 .sidebar-tabs { display: flex !important; flex-wrap: wrap !important; }
 .sidebar-tabs .stab { flex: 0 0 auto !important; }
+
+/* ── «experimentell» (orange) und externer Link «Politik» ─────── */
+.stab-exp { color: #F0883E !important; border-color: rgba(240,136,62,0.55) !important; }
+.stab-exp:hover { color: #FFB27A !important; border-color: #F0883E !important; background: #1d1710 !important; }
+.stab-exp-selected { background: #F0883E !important; border-color: #F0883E !important; color: #1A1208 !important; font-weight: 600 !important; }
+.stab-politik { cursor: alias; }
+.header-exp { color: #F0883E; }
+.header-ext-link { color: #8B949E; text-decoration: underline dotted; }
+.header-ext-link:hover { color: #E6EDF3; }
+.exp-badge {
+  display: inline-block; background: rgba(240,136,62,0.16); color: #F0883E; border: 1px solid rgba(240,136,62,0.6);
+  border-radius: 10px; padding: 0 8px; font-size: 0.66rem; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase; line-height: 1.5; margin-left: 6px;
+}
+.ext-badge {
+  display: inline-block; color: #8B949E; border: 1px solid #484F58; border-radius: 10px; padding: 0 8px; font-size: 0.66rem; margin-left: 6px; line-height: 1.5;
+}
+.exp-notice {
+  background: #161B22; border: 1px solid rgba(240,136,62,0.6); border-left: 4px solid #F0883E; border-radius: 6px;
+  padding: 8px 12px; margin-bottom: 12px; font-size: 0.82rem;
+}
+.area-item { border: 1px solid #30363D; border-radius: 6px; padding: 8px 10px; background: #0D1117; height: 100%; }
+.area-item-exp { border-color: rgba(240,136,62,0.5); }
+.area-head { display: flex; align-items: center; flex-wrap: wrap; }
+.area-link { color: #58A6FF; font-weight: 600; font-size: 0.88rem; text-decoration: none; }
+.area-link:hover { text-decoration: underline; }
+.area-exp { color: #F0883E; }
+.area-desc { color: #8B949E; font-size: 0.76rem; margin-top: 2px; }
+.exp-explain { margin-top: 12px; color: #8B949E; font-size: 0.8rem; border-top: 1px solid #30363D; padding-top: 10px; }
