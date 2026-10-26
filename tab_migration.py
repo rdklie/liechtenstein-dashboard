@@ -81,11 +81,6 @@ def sidebar_section() -> html.Div:
                        marks={y: {"label": str(y), "style": {"color": MUTED, "fontSize": "10px"}} for y in range(1990, 2026, 5)},
                        tooltip={"placement": "bottom", "always_visible": True}, className="fl-slider"),
         ], className="filter-section"),
-        html.Div([
-            html.Label("Straffälligkeit: Stufe", className="filter-label"),
-            dcc.RadioItems(id="mig-stage", options=STAGES, value="PER_SUSP", className="fl-checklist",
-                           labelClassName="checklist-label"),
-        ], className="filter-section"),
     ])
 
 
@@ -579,84 +574,15 @@ CRIME_CAVEATS = [
 ]
 
 
-def section_crime(countries: list[str], stage: str, year: int):
-    out = [_card([
-        html.H6([html.I(className="fas fa-triangle-exclamation", style={"marginRight": "8px", "color": FL_GOLD}),
-                 "Wie lesen? Methodische Hinweise zu den Kennzahlen"], style={"color": TEXT}),
-        html.Ul([html.Li(t, style={"marginBottom": "3px"}) for t in CRIME_CAVEATS],
-                style={"color": MUTED, "fontSize": "0.8rem", "paddingLeft": "18px", "marginBottom": "0"})]),
-        html.Div(style={"height": "10px"})]
-    cr = _g(es_id("crime"))
-    fp = _foreign_pop()
-    if cr.empty or fp.empty:
-        return out + [_empty("Keine Daten in der Datenbank.")]
-    c = cr[(cr["unit"] == "NR") & (cr["leg_stat"] == stage) & cr["iso3"].notna()].copy()
-    c["year"] = c["time"].astype(int)
-    pv = c.pivot_table(index=["iso3", "year"], columns="citizen", values="Wert").reset_index()
-    pv = pv.merge(fp[["iso3", "year", "foreign", "NAT", "TOTAL"]].rename(columns={"NAT": "pop_nat", "TOTAL": "pop_total"}),
-                  on=["iso3", "year"], how="inner")
-    pv["rate_for"] = pv["FOR"] / pv["foreign"] * 1e5
-    pv["rate_nat"] = pv["NAT"] / pv["pop_nat"] * 1e5
-    pv["share_for"] = pv["FOR"] / (pv["FOR"] + pv["NAT"]) * 100
-    name = STAGE_NAME[stage]
-
-    # Zeitreihe je Land: Rate Inländer vs Ausländer
-    fig = go.Figure()
-    for i, cc in enumerate(countries):
-        d = pv[pv["iso3"] == cc].sort_values("year")
-        if d.empty:
-            continue
-        col = _col(i, cc)
-        fig.add_trace(go.Scatter(x=d["year"], y=d["rate_nat"], mode="lines+markers", name=f"{_name(cc)}: Staatsangehörige",
-                                 line=dict(color=col, width=2), hovertemplate=f"<b>{_name(cc)}</b> Inländer %{{x}}: %{{y:,.0f}} je 100 000<extra></extra>"))
-        fig.add_trace(go.Scatter(x=d["year"], y=d["rate_for"], mode="lines+markers", name=f"{_name(cc)}: Ausländer*",
-                                 line=dict(color=col, width=2, dash="dot"),
-                                 hovertemplate=f"<b>{_name(cc)}</b> Ausländer* %{{x}}: %{{y:,.0f}} je 100 000<extra></extra>"))
-    _styled(fig, f"{name} je 100 000 der Gruppe (*Zähler inkl. Nichtansässige)")
-    fig.update_xaxes(tickformat="d")
-    out.append(_card(_graph(fig, 400)) if fig.data else _empty("Für die gewählten Länder liegen bei dieser Stufe keine Daten vor."))
-    nodata = [cc for cc in countries if pv[pv["iso3"] == cc].empty]
-    if nodata:
-        out.append(_note("Keine Daten (Eurostat crim_just_ctz) für: " + ", ".join(_name(x) for x in nodata), "fa-triangle-exclamation", FL_GOLD))
-
-    # Vergleich im Jahr: Anteil Ausländer an den Personen vs. Anteil an der Bevölkerung
-    yrs = sorted(pv["year"].unique())
-    use = max([y for y in yrs if y <= year] or [yrs[0]])
-    d = pv[(pv["year"] == use) & (pv["iso3"].isin(countries))].dropna(subset=["share_for"]).copy()
-    if not d.empty:
-        d["pop_share"] = d["foreign"] / d["pop_total"] * 100
-        d = d.sort_values("share_for")
-        f2 = go.Figure()
-        f2.add_trace(go.Bar(y=[_name(x) for x in d["iso3"]], x=d["pop_share"], orientation="h", name="Anteil an der Wohnbevölkerung", marker_color=FL_BLUE))
-        f2.add_trace(go.Bar(y=[_name(x) for x in d["iso3"]], x=d["share_for"], orientation="h", name=f"Anteil an den {name}*", marker_color=FL_RED))
-        _styled(f2, f"Ausländeranteil: Bevölkerung vs. {name}, {use} (%)")
-        f2.update_layout(barmode="group", hovermode="closest", margin=dict(l=100, r=20, t=50, b=40))
-        f2.update_xaxes(ticksuffix=" %")
-        out.append(_card(_graph(f2, max(300, 70 * len(d) + 100))))
-        out.append(_note(f"Gezeigt wird {use}" + ("" if use == year else f" (letztes verfügbares Jahr bis {year})") +
-                         ". Ein höherer Anteil bei den Personen als in der Bevölkerung ist NICHT als Neigung einer Gruppe zu lesen — "
-                         "siehe methodische Hinweise (Nichtansässige, Alter/Geschlecht, Anzeigeverhalten)."))
-    st = _stand(es_id("crime"), es_id("pop_cit"))
-    out.append(_source(("Eurostat crim_just_ctz (Verdächtige/Strafverfolgte/Verurteilte nach Staatsangehörigkeit), Bevölkerung migr_pop1ctz",
-                        URL["es"].format("crim_just_ctz")), (ES_LICENSE, None),
-                       ("Raten je Gruppe: eigene Berechnung (Personen / Wohnbevölkerung der Gruppe am 1.1.)", None),
-                       (f"Stand der Daten: {st:%d.%m.%Y}" if st else "Stand unbekannt", None)))
-
-    # Liechtenstein: Landespolizei
-    li = pv[pv["iso3"] == LI].sort_values("year")
-    cards = [html.H6("Liechtenstein: was die Quellen ausweisen", style={"color": TEXT}),
-             html.P("Eurostat veröffentlicht für Liechtenstein Personen nach Staatsangehörigkeit (Inland/Ausland); das Amt für Statistik hat "
-                    "dazu keine Tabelle auf opendata.li. Die Landespolizei weist in ihren Jahresberichten die Nationalität der Tatverdächtigen "
-                    "aus: Im Jahresbericht 2021 (S. 22) waren von 496 Tatverdächtigen nach Strafgesetzbuch 31 % Liechtensteiner und 69 % "
-                    "ausländische Staatsangehörige; bei den 8 neu verhängten Untersuchungshaften 2021 hatten 5 Personen einen Wohnsitz im "
-                    "Ausland, 2 einen Wohnsitz in Liechtenstein und 1 war Liechtensteiner (S. 34). Die Landespolizeistatistik ist eine "
-                    "«Anzeigenstatistik» mit Tatort Liechtenstein (Hellfeld) und schliesst Personen ohne Wohnsitz in Liechtenstein ein — "
-                    "deshalb ist der Ausländeranteil dort nicht mit dem Anteil an der Wohnbevölkerung (rund 35 %) vergleichbar.",
-                    style={"color": MUTED, "fontSize": "0.82rem"}),
-             html.Div([html.A("Landespolizei Liechtenstein, Jahresberichte", href=URL["lp"], target="_blank", rel="noopener noreferrer",
-                              className="source-link")], className="source-bar")]
-    out.append(_card(cards))
-    return out
+def section_crime_pointer():
+    return _card([
+        html.H6([html.I(className="fas fa-arrow-right", style={"marginRight": "8px", "color": ACCENT}),
+                 "Straffälligkeit nach Staatsangehörigkeit: eigener Tab «Polizeistatistik»"], style={"color": TEXT}),
+        html.P(["Kriminalitätszahlen (Landespolizei Liechtenstein, Eurostat-Ländervergleich mit Raten je Gruppe) stehen mit allen methodischen Hinweisen im Tab ",
+                html.A("Polizeistatistik", href="?tab=polizei", className="source-link"),
+                ". Sie werden dort einmalig gepflegt und hier nicht wiederholt."],
+               style={"color": MUTED, "fontSize": "0.85rem", "marginBottom": "0"}),
+    ])
 
 
 # ── Abschnitt: Ausgaben ───────────────────────────────────────────────────────
@@ -682,7 +608,6 @@ def render_migration(data: dict) -> html.Div:
     countries = [c for c in (data.get("mig_countries") or DEFAULT_COUNTRIES) if c in COUNTRY_NAMES] or DEFAULT_COUNTRIES
     groups = [g for g in (data.get("mig_groups") or []) if g in GROUPS]
     year = int(data.get("mig_year") or DEFAULT_YEAR)
-    stage = data.get("mig_stage") or "PER_SUSP"
     if _g(es_id("pop_cit")).empty and _g(WB_KEY).empty:
         return html.Div([html.H4("Migration", className="section-title"),
                          _empty("Noch keine Daten in der Datenbank — der wöchentliche Abruf füllt sie.")])
@@ -696,8 +621,8 @@ def render_migration(data: dict) -> html.Div:
         *section_li(),
         _section("3 · Wanderung, Einbürgerung, Asyl, Arbeitsmarkt"),
         *section_flows(countries),
-        _section("4 · Straffälligkeit nach Staatsangehörigkeit", "Mit Raten je Gruppe und methodischen Hinweisen direkt an den Kennzahlen."),
-        *section_crime(countries, stage, year),
+        _section("4 · Straffälligkeit nach Staatsangehörigkeit"),
+        section_crime_pointer(),
         _section("5 · Ausgaben je Migrant"),
         section_costs(),
     ])

@@ -15,6 +15,7 @@ Live unter <https://daten.li>.
 | `tab_factbook.py`, `factbook_import.py` | Tab «Factbook» (CIA World Factbook, Archiv 1990–2025) und der einmalige Import |
 | `tab_imf.py`, `imf.py` | Tab «IWF» (World Economic Outlook, DataMapper API) |
 | `tab_migration.py`, `migration.py` | Tab «Migration»: Anteile, Liechtenstein im Detail, Wanderung/Einbürgerung/Asyl, Straffälligkeit |
+| `tab_police.py`, `police.py` | Tab «Polizeistatistik»: Jahresberichte der Landespolizei (Import/Parser) + Eurostat-Kriminalität nach Staatsangehörigkeit |
 | `ui.py` | Gemeinsame Farben/Diagramm-Helfer |
 | `deploy/` | Deployment nach cyon |
 
@@ -85,14 +86,27 @@ Sachlich und quellenbasiert; zu jeder Kennzahl Definition, Quelle, Lizenz und St
   Geborene/UN-Migrantenbestand).
 - **Wanderung, Einbürgerung, Asyl, Arbeitsmarkt:** LI PX 231.101/232.001/233.201/284.101; Eurostat `migr_acq` (je 100 ausländische Einwohner),
   `migr_asyappctza` (je 100 000 Einwohner). Eurostat `lfsa_urgacob` und `ilc_li32` (Geburtsland) haben für LI keine Werte und werden nicht gezeigt.
-- **Straffälligkeit:** Eurostat `crim_just_ctz` (Verdächtige/Strafverfolgte/Verurteilte; Inland/Ausland), Raten je Gruppe selbst berechnet (Eurostat selbst
-  bezieht «je 100 000» auf die Gesamtbevölkerung). Mit methodischen Hinweisen (Nichtansässige im Zähler, Alter/Geschlecht, Anzeigeverhalten, Definitionen).
-  Liechtenstein weist Nationalität aus: Landespolizei-Jahresbericht 2021 (S. 22, 34); das Amt für Statistik hat keine Kriminalitätstabelle.
+- **Straffälligkeit:** steht im Tab «Polizeistatistik» (Verweis im Tab «Migration»).
 - **Ausgaben je Migrant:** bewusst keine Zahlen — Eurostat/OECD/Liechtenstein liefern keine belastbare, vergleichbare Statistik (Begründung im Tab).
 - **Datenhaltung:** Worker spiegelt die Quellen höchstens wöchentlich (`migration.all_sources()`, Cache-Schlüssel `es:`, `wb:`, `pxs:` in `px_cache`).
   Lizenzen: Eurostat © EU CC BY 4.0, Weltbank/UN DESA CC BY 4.0, Amt für Statistik Namensnennung.
 - **Nicht umgesetzt (Quelle fehlt/unzuverlässig):** Rücküberweisungen (Weltbank-Indikator ohne Liechtenstein), Armutsgefährdung nach Geburtsland (ohne Liechtenstein),
   Bildungsabschlüsse nach Herkunft (LI nur Volkszählung 2020, andere Länder nicht vergleichbar aufbereitet).
+
+## Polizeistatistik (Tab «Polizeistatistik»)
+
+- **Landespolizei Liechtenstein:** `police.py` (einmalig, `deploy.ps1 -ImportPolice`, kein Cron) lädt die 17 öffentlichen Jahresberichte 2009–2025 von
+  [landespolizei.li/ueber-uns/jahresberichte](https://www.landespolizei.li/ueber-uns/jahresberichte) (robots.txt erlaubt es; 2 s Pause, ein Request je PDF),
+  legt sie unter `~/daten-li/data/archive/police/` ab (+ `manifest.json` mit URL/SHA-256) und liest per `pypdf` Kennzahlen aus dem Text: Straftatbestände StGB,
+  Aufklärungsrate, Tatverdächtige (gesamt, Anteil Liechtensteiner/Ausländer, minderjährig), Deliktsgruppen, Verkehrsunfälle/Verletzte/Tote, Untersuchungshaften
+  (Herkunft/Wohnsitz), Notrufe/Einsätze LNEZ. **Jeder Wert speichert Seite und Textausschnitt** (`police_metrics`; im Tab «Beleg je Wert» einsehbar).
+  Querprüfung: nennt ein Bericht den Vorjahreswert, muss er zum Wert im Vorjahresbericht passen, sonst `flag` (hohler Marker im Diagramm).
+  Lücken bleiben Lücken (keine Schätzungen); Tab «Abdeckung» zeigt je Jahr/Kennzahl, was gefunden wurde.
+- **Definitionswechsel (belegt aus den Berichten):** Aufklärungsquote 2009/2010 «ohne Wirtschafts-/Betäubungsmitteldelikte» (38 %), ab Bericht 2017 ausdrücklich
+  StGB + BMG, 2011–2013 nicht im Text, 2014–2016 Basis nicht beschrieben; Notrufe «Notrufe» (bis 2013) vs. «Meldungen» (ab 2018); Verkehrsunfälle ab 2024 nur noch im
+  Fliesstext. Reihen werden nicht über solche Brüche verbunden.
+- **Eurostat-Ländervergleich** (aus dem Tab «Migration» verschoben): `crim_just_ctz`, Raten je Gruppe, Methodikkasten; Vergleich nur innerhalb eines Landes, kein Ranking.
+- Lizenz Landespolizei: öffentlich zugängliche amtliche Publikation ohne ausdrückliche Lizenzangabe → nur Kennzahlen mit Quellen-/Seitenangabe, keine Textübernahme.
 
 ## Lokal starten
 

@@ -18,6 +18,9 @@ Tabellen:
   od_discovery_log      — Funde des Discovery-Crawlers (neu/entfernt/geändert)
   factbook_fields       — CIA World Factbook (Archiv 1990–2025), Rohtext je Jahr/Feld, Liechtenstein
   factbook_values       — daraus geparste Kennzahlen je Jahr (Zeitreihen)
+  police_metrics        — Kennzahlen aus den Jahresberichten der Landespolizei (mit Seite und Quelltext je Wert)
+  police_delikte        — Deliktsgruppen-Tabelle (soweit als Text lesbar)
+  police_reports        — Berichtsdateien (URL, SHA-256, Abrufdatum, Fehler)
   imf_data              — IWF DataMapper: Indikatoren für Liechtenstein (falls vorhanden)
 """
 
@@ -176,6 +179,41 @@ CREATE TABLE IF NOT EXISTS imf_data (
     value       FLOAT,
     fetched_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     PRIMARY KEY (indicator, year)
+);
+
+CREATE TABLE IF NOT EXISTS police_metrics (
+    year        INTEGER NOT NULL,
+    metric      TEXT    NOT NULL,
+    value       FLOAT,
+    prev        FLOAT,
+    page        INTEGER,
+    source_text TEXT,
+    flag        TEXT,
+    PRIMARY KEY (year, metric)
+);
+
+CREATE TABLE IF NOT EXISTS police_delikte (
+    year        INTEGER NOT NULL,
+    grp         TEXT    NOT NULL,
+    page        INTEGER,
+    offences    INTEGER,
+    offences_prev INTEGER,
+    tv_total    INTEGER,
+    tv_under18  INTEGER,
+    tv_foreign  INTEGER,
+    source_text TEXT,
+    PRIMARY KEY (year, grp)
+);
+
+CREATE TABLE IF NOT EXISTS police_reports (
+    year        INTEGER PRIMARY KEY,
+    file        TEXT,
+    url         TEXT,
+    sha256      TEXT,
+    bytes       INTEGER,
+    pages       INTEGER,
+    retrieved   TEXT,
+    error       TEXT
 );
 
 CREATE TABLE IF NOT EXISTS imf_meta (
@@ -490,6 +528,34 @@ def read_factbook_fields(field: str | None = None) -> pd.DataFrame:
     if field:
         return _read("SELECT year, category, field, content FROM factbook_fields WHERE field = :f ORDER BY year", {"f": field})
     return _read("SELECT year, category, field, content FROM factbook_fields ORDER BY year")
+
+
+def write_police(metrics: pd.DataFrame, delikte: pd.DataFrame, reports: pd.DataFrame):
+    """Ersetzt den kompletten Polizeistatistik-Bestand (einmaliger Import, police.py)."""
+    engine = _get_engine()
+    if engine is None or metrics.empty:
+        return
+    with engine.connect() as conn:
+        for t in ("police_metrics", "police_delikte", "police_reports"):
+            conn.execute(text(f"DELETE FROM {t}"))
+        conn.commit()
+    metrics.to_sql("police_metrics", engine, if_exists="append", index=False, method="multi", chunksize=200)
+    if not delikte.empty:
+        delikte.to_sql("police_delikte", engine, if_exists="append", index=False, method="multi", chunksize=200)
+    if not reports.empty:
+        reports.to_sql("police_reports", engine, if_exists="append", index=False, method="multi", chunksize=200)
+
+
+def read_police_metrics() -> pd.DataFrame:
+    return _read("SELECT year, metric, value, prev, page, source_text, flag FROM police_metrics ORDER BY metric, year")
+
+
+def read_police_delikte() -> pd.DataFrame:
+    return _read("SELECT * FROM police_delikte ORDER BY year, grp")
+
+
+def read_police_reports() -> pd.DataFrame:
+    return _read("SELECT * FROM police_reports ORDER BY year")
 
 
 def write_imf(df: pd.DataFrame, indicator: str):

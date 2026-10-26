@@ -36,6 +36,7 @@ from ui import (
 import tab_factbook
 import tab_imf
 import tab_migration
+import tab_police
 import tab_opendata
 import tab_wohnen
 from db import (
@@ -135,7 +136,7 @@ HEADER = html.Div(
                     html.Span("🇱🇮", style={"fontSize": "2rem", "marginRight": "12px"}),
                     html.Div([
                         html.H1("Liechtenstein Dashboard", className="header-title"),
-                        html.P("Wirtschaft · Bevölkerung · Klima · Tourismus · Wohnen · Open Data · Factbook · IWF · Migration", className="header-sub"),
+                        html.P("Wirtschaft · Bevölkerung · Klima · Tourismus · Wohnen · Open Data · Factbook · IWF · Migration · Polizeistatistik", className="header-sub"),
                     ]),
                 ], className="header-left"),
                 html.Div([
@@ -191,6 +192,7 @@ def _build_sidebar() -> html.Div:
                                 dcc.Tab(label="Factbook",   value="factbook",   className="stab", selected_className="stab-selected"),
                                 dcc.Tab(label="IWF",        value="imf",        className="stab", selected_className="stab-selected"),
                                 dcc.Tab(label="Migration",  value="migration",  className="stab", selected_className="stab-selected"),
+                                dcc.Tab(label="Polizeistatistik", value="polizei", className="stab", selected_className="stab-selected"),
                             ],
                         ),
                     ], className="filter-section"),
@@ -285,6 +287,7 @@ def _build_sidebar() -> html.Div:
                     tab_wohnen.sidebar_section(),
                     tab_factbook.sidebar_section(),
                     tab_migration.sidebar_section(),
+                    tab_police.sidebar_section(),
 
                     html.Hr(className="filter-hr"),
 
@@ -442,10 +445,13 @@ def filters_to_url(tab, year, indicators, weather_year, weather_vars, municipali
     Input("mig-countries",         "value"),
     Input("mig-groups",            "value"),
     Input("mig-year",              "value"),
-    Input("mig-stage",             "value"),
+    Input("pol-countries",         "value"),
+    Input("pol-stage",             "value"),
+    Input("pol-year",              "value"),
 )
 def render_content(tab, year, indicators, weather_year, weather_vars, municipality, tourism_year,
-                   housing_muni, housing_rent, factbook_mode, mig_ind, mig_countries, mig_groups, mig_year, mig_stage):
+                   housing_muni, housing_rent, factbook_mode, mig_ind, mig_countries, mig_groups, mig_year,
+                   pol_countries, pol_stage, pol_year):
     data = {
         "tab":          tab          or "uebersicht",
         "year":         year         or DEFAULT_YEAR,
@@ -458,9 +464,12 @@ def render_content(tab, year, indicators, weather_year, weather_vars, municipali
         "housing_rent": housing_rent,
         "factbook_mode": factbook_mode,
         "mig_ind": mig_ind, "mig_countries": mig_countries, "mig_groups": mig_groups,
-        "mig_year": mig_year, "mig_stage": mig_stage,
+        "mig_year": mig_year,
+        "pol_countries": pol_countries, "pol_stage": pol_stage, "pol_year": pol_year,
     }
-    if data["tab"] == "migration":
+    if data["tab"] == "polizei":
+        return tab_police.render_police(data)
+    elif data["tab"] == "migration":
         return tab_migration.render_migration(data)
     elif data["tab"] == "imf":
         return tab_imf.render_imf()
@@ -488,11 +497,12 @@ def render_content(tab, year, indicators, weather_year, weather_vars, municipali
     Output("filter-housing",  "style"),
     Output("filter-factbook", "style"),
     Output("filter-migration", "style"),
+    Output("filter-police", "style"),
     Input("tab-select", "value"),
 )
 def toggle_filters(tab):
     show, hide = {"display": "block"}, {"display": "none"}
-    order = ["wirtschaft", "tourismus", "klima", "wohnen", "factbook", "migration"]
+    order = ["wirtschaft", "tourismus", "klima", "wohnen", "factbook", "migration", "polizei"]
     return tuple(show if tab == t else hide for t in order)
 
 
@@ -640,6 +650,7 @@ def _render_overview(data: dict):
             _source_info_row("fa-chart-bar",   "Amt für Statistik Liechtenstein", "https://www.llv.li/de/landesverwaltung/amt-fuer-statistik", "Tourismus, Sektoren, Bevölkerung"),
             _source_info_row("fa-university",  "Eurostat",                        "https://ec.europa.eu/eurostat",                 "BIP & Wirtschaftsstatistik (EWR)"),
             _source_info_row("fa-map-marked-alt", "OpenStreetMap / Overpass API", "https://www.openstreetmap.org/",               "Points of Interest in Liechtenstein"),
+            _source_info_row("fa-shield-halved", "Landespolizei Liechtenstein (Jahresberichte) · Eurostat", "https://www.landespolizei.li/ueber-uns/jahresberichte", "Kriminalität, Verkehrsunfälle, Untersuchungshaft; Verdächtige nach Staatsangehörigkeit (Eurostat)"),
             _source_info_row("fa-people-arrows", "Eurostat · UN DESA/Weltbank · Amt für Statistik", "https://ec.europa.eu/eurostat", "Migration: Anteile, Einbürgerung, Asyl, Straffälligkeit nach Staatsangehörigkeit (CC BY)"),
             _source_info_row("fa-landmark", "IWF – World Economic Outlook", "https://www.imf.org/external/datamapper", "15 Indikatoren für Liechtenstein (Schätzungen/Projektionen; kein IWF-Mitglied)"),
             _source_info_row("fa-box-archive", "CIA World Factbook (Archiv 1990–2025)", "https://www.cia.gov/the-world-factbook/", "Liechtenstein in allen Ausgaben, gemeinfrei, eingestellt 2026"),

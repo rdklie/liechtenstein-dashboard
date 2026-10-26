@@ -7,6 +7,7 @@
 #   -Htaccess   schreibt deploy/server/htaccess nach ~/public_html/datasites/.htaccess (Backup .htaccess.bak)
 #   -ForceHttps wie -Htaccess, aber mit HTTP->HTTPS-Weiterleitung + HSTS (erst nach Zertifikat im cyon-Panel!)
 #   -RunWorker  startet den Datenabruf sofort (Dauer ca. 3 Min.), sonst erst per Cron um 06:00 UTC
+#   -ImportPolice   einmaliger Import der Landespolizei-Jahresberichte (Download 17 PDFs, ca. 1 Min.)
 #   -ImportFactbook  einmaliger Import des CIA-World-Factbook-Archivs (Liechtenstein) von GitHub, ca. 1 Min.
 #   -RunDiscover startet den opendata.li-Discovery-Lauf sofort (ca. 1 Min.), sonst sonntags 05:30 UTC
 param(
@@ -14,7 +15,8 @@ param(
     [switch]$ForceHttps,
     [switch]$RunWorker,
     [switch]$RunDiscover,
-    [switch]$ImportFactbook
+    [switch]$ImportFactbook,
+    [switch]$ImportPolice
 )
 $ErrorActionPreference = 'Continue'  # stderr-Warnungen von ssh/pip sind kein Fehler; Exitcodes werden explizit geprueft
 $OutputEncoding = New-Object System.Text.UTF8Encoding($false)
@@ -28,7 +30,7 @@ $Pkg     = Join-Path $env:TEMP 'daten-li-deploy.tgz'
 Write-Host '1/5 Paket schnueren ...'
 Remove-Item $Pkg -ErrorAction SilentlyContinue
 Push-Location $Root
-tar -czf $Pkg app.py ui.py tab_wohnen.py tab_opendata.py tab_factbook.py tab_imf.py tab_migration.py migration.py opendata.py imf.py factbook_import.py discover.py data_fetcher.py db.py worker.py requirements.txt assets deploy/server
+tar -czf $Pkg app.py ui.py tab_wohnen.py tab_opendata.py tab_factbook.py tab_imf.py tab_migration.py migration.py tab_police.py police.py opendata.py imf.py factbook_import.py discover.py data_fetcher.py db.py worker.py requirements.txt assets deploy/server
 if ($LASTEXITCODE -ne 0) { throw 'tar fehlgeschlagen' }
 Pop-Location
 
@@ -45,8 +47,8 @@ cd $B/_staging && tar -xzf pkg.tgz
 sed -i 's/\r$//' deploy/server/*   # Sicherheitsnetz gegen CRLF aus Windows
 mkdir -p $B/app $B/bin $B/data $B/cache $B/logs
 chmod 700 $B $B/data
-rsync -a --delete --exclude=__pycache__ app.py ui.py tab_wohnen.py tab_opendata.py tab_factbook.py tab_imf.py tab_migration.py migration.py opendata.py imf.py factbook_import.py discover.py data_fetcher.py db.py worker.py requirements.txt assets $B/app/
-install -m 755 deploy/server/keepalive.sh deploy/server/stop.sh deploy/server/run-worker.sh deploy/server/run-discover.sh deploy/server/run-factbook-import.sh $B/bin/
+rsync -a --delete --exclude=__pycache__ app.py ui.py tab_wohnen.py tab_opendata.py tab_factbook.py tab_imf.py tab_migration.py migration.py tab_police.py police.py opendata.py imf.py factbook_import.py discover.py data_fetcher.py db.py worker.py requirements.txt assets $B/app/
+install -m 755 deploy/server/keepalive.sh deploy/server/stop.sh deploy/server/run-worker.sh deploy/server/run-discover.sh deploy/server/run-factbook-import.sh deploy/server/run-police-import.sh $B/bin/
 
 # venv + Abhaengigkeiten (nur bei geaenderter requirements.txt)
 [ -x $B/venv/bin/python ] || /opt/alt/python311/bin/python3.11 -m venv $B/venv
@@ -84,6 +86,11 @@ if ($RunWorker) {
     ssh @SshOpts $Remote '~/daten-li/bin/run-worker.sh; tail -n 15 ~/daten-li/logs/worker.log'
 } else {
     Write-Host '4/5 Datenabruf uebersprungen (-RunWorker)'
+}
+
+if ($ImportPolice) {
+    Write-Host '4d/5 Polizei-Jahresberichte (police.py) ...'
+    ssh @SshOpts $Remote '~/daten-li/bin/run-police-import.sh | tail -n 22'
 }
 
 if ($ImportFactbook) {
