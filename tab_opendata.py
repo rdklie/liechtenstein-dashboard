@@ -177,7 +177,7 @@ def render_opendata() -> html.Div:
     last_seen = cat_all["last_seen"].max()
     log_df = read_discovery_log(200)
     last_run = log_df["run_at"].max() if not log_df.empty else None
-    n_events = int((log_df["run_at"] == last_run).sum()) if last_run else 0
+    n_events = int(((log_df["run_at"] == last_run) & (log_df["event"] != "lauf")).sum()) if last_run else 0
     pubs = _publisher_counts(cat_all)
 
     kpis = dbc.Row([
@@ -256,7 +256,7 @@ def render_opendata() -> html.Div:
     # Discovery-Funde (nur Hinweise)
     disc_rows = []
     if not log_df.empty:
-        for r in log_df[log_df["run_at"] == last_run].head(30).itertuples():
+        for r in log_df[(log_df["run_at"] == last_run) & (log_df["event"] != "lauf")].head(30).itertuples():
             disc_rows.append(html.Tr([html.Td(r.event), html.Td(f"{r.ref}"), html.Td(r.title), html.Td(r.detail)]))
     disc_card = _card([
         html.H6("Discovery-Crawler: Funde des letzten Laufs", style={"color": TEXT}),

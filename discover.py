@@ -154,7 +154,8 @@ def run() -> int:
                            "detail": f"{r['publisher']} ({r['publisher_source']})"})
     db.write_orgs(list(orgs.values()))
     db.write_catalog(records)
-    db.write_discovery_log(events)
+    # Lauf-Markierung, damit der Tab auch «0 Funde» von «noch nie gelaufen» unterscheiden kann
+    db.write_discovery_log(events + [{"event": "lauf", "ref": "", "title": "Discovery-Lauf", "detail": f"{len(events)} Funde"}])
 
     # Bericht
     kinds = {}
