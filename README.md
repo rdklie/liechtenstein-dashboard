@@ -17,6 +17,7 @@ Live unter <https://daten.li>.
 | `tab_migration.py`, `migration.py` | Tab «Migration»: Anteile, Liechtenstein im Detail, Wanderung/Einbürgerung/Asyl, Straffälligkeit |
 | `tab_police.py`, `police.py` | Tab «Polizeistatistik»: Jahresberichte der Landespolizei (Import/Parser) + Eurostat-Kriminalität nach Staatsangehörigkeit |
 | `tab_klima.py`, `climate.py` | Tab «Klimawandel»: ERA5-Langzeitreihen je Gemeinde (Open-Meteo-Archiv), Kennzahlen, Trends |
+| `tab_korrelation.py`, `correlate.py` | Tab «Korrelations-Labor»: Reihenkatalog (~120 Jahresreihen), Pearson/Spearman, Transformationen, Zeitverschiebung, Hypothesen-Galerie |
 | `ui.py` | Gemeinsame Farben/Diagramm-Helfer |
 | `deploy/` | Deployment nach cyon |
 
@@ -120,6 +121,16 @@ Sachlich und quellenbasiert; zu jeder Kennzahl Definition, Quelle, Lizenz und St
 - **Auflösung ehrlich gekennzeichnet:** ERA5 ≈ 25–30 km Raster; Open-Meteo liefert die Höhe seines Höhenmodells am Punkt (z. B. Triesenberg 1042 m statt 884 m) und die Temperaturen
   unterscheiden sich im Mass der Höhenunterschiede (≈ 5–6 K/km) → Höhenkorrektur der Temperatur durch Open-Meteo wahrscheinlich; Niederschlag/Schnee als Rasterwerte. Wir korrigieren nicht nach,
   zeigen aber die Rasterpunkt-Höhe in der Trendtabelle.
+
+## Korrelations-Labor (Tab «Korrelations-Labor»)
+
+- **Reihen:** Jahreswerte aus der SQLite-DB (Weltbank, Eurostat-Tourismus, IWF-Ist-Werte, Factbook je Bezugsjahr, Amt für Statistik: Bevölkerung/Wohnen/Migration/Arbeitslosigkeit,
+  Eurostat-Migration, Landespolizei, ERA5-Klima je Gemeinde); Projektionen (IWF ≥ 2026) werden nie korreliert. Nichts wird live abgerufen; die Berechnung (n ≤ ~80) ist
+  in Millisekunden erledigt (`correlate.py`: numpy/pandas, p-Werte über die regularisierte unvollständige Betafunktion, 95-%-KI über Fisher-z, kein SciPy nötig).
+- **Funktionen:** Pearson und Spearman (r, p, KI, n), Transformationen (Niveau, Δ, %, Trend entfernt), Zeitverschiebung ±8 Jahre mit Lag-Scan, Streudiagramm + Zeitreihe mit zwei
+  Achsen, Tabelle aller Transformationen (Scheinkorrelations-Check), teilbarer Link (`?tab=korrelation&ka=<A>&kb=<B>&kh=<Transformation>&kl=<Lag>`).
+- **Warnschilder:** n < 15, gemeinsamer Trend (Mann-Kendall beider Reihen), viele getestete Paare/Verschiebungen, keine Kausalität; Autokorrelation macht p-Werte optimistisch.
+- **Hypothesen-Galerie:** kuratierte Fragen mit «warum plausibel» und «dagegen spricht» — als Hypothese gekennzeichnet, kein Beleg. Monatswerte werden nicht angeboten (fast alle Daten sind jährlich).
 
 ## Lokal starten
 

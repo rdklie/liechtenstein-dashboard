@@ -36,6 +36,7 @@ from ui import (
 import tab_factbook
 import tab_imf
 import tab_klima
+import tab_korrelation
 import tab_migration
 import tab_police
 import tab_opendata
@@ -137,7 +138,7 @@ HEADER = html.Div(
                     html.Span("🇱🇮", style={"fontSize": "2rem", "marginRight": "12px"}),
                     html.Div([
                         html.H1("Liechtenstein Dashboard", className="header-title"),
-                        html.P("Wirtschaft · Bevölkerung · Klima · Tourismus · Wohnen · Open Data · Factbook · IWF · Migration · Polizeistatistik · Klimawandel", className="header-sub"),
+                        html.P("Wirtschaft · Bevölkerung · Klima · Tourismus · Wohnen · Open Data · Factbook · IWF · Migration · Polizeistatistik · Klimawandel · Korrelations-Labor", className="header-sub"),
                     ]),
                 ], className="header-left"),
                 html.Div([
@@ -195,6 +196,7 @@ def _build_sidebar() -> html.Div:
                                 dcc.Tab(label="Migration",  value="migration",  className="stab", selected_className="stab-selected"),
                                 dcc.Tab(label="Polizeistatistik", value="polizei", className="stab", selected_className="stab-selected"),
                                 dcc.Tab(label="Klimawandel", value="klimawandel", className="stab", selected_className="stab-selected"),
+                                dcc.Tab(label="Korrelations-Labor", value="korrelation", className="stab", selected_className="stab-selected"),
                             ],
                         ),
                     ], className="filter-section"),
@@ -291,6 +293,7 @@ def _build_sidebar() -> html.Div:
                     tab_migration.sidebar_section(),
                     tab_police.sidebar_section(),
                     tab_klima.sidebar_section(),
+                    tab_korrelation.sidebar_section(),
 
                     html.Hr(className="filter-hr"),
 
@@ -375,7 +378,8 @@ app.clientside_callback(
                 ['NY.GDP.MKTP.CD', 'NY.GDP.PCAP.CD'],
                 2024,
                 ['temp_max', 'temp_min'],
-                'vaduz'
+                'vaduz',
+                'li|pop', 'li|wohnungen', 'level', 0
             ];
         }
         var tab  = p['tab']  || 'uebersicht';
@@ -388,7 +392,7 @@ app.clientside_callback(
         var ind, wv;
         try { ind = JSON.parse(p['indicators']); }   catch(e) { ind = ['NY.GDP.MKTP.CD','NY.GDP.PCAP.CD']; }
         try { wv  = JSON.parse(p['weather_vars']); } catch(e) { wv  = ['temp_max','temp_min']; }
-        return [tab, [y0, y1], ind, wy, wv, muni];
+        return [tab, [y0, y1], ind, wy, wv, muni, p['ka'] || 'li|pop', p['kb'] || 'li|wohnungen', p['kh'] || 'level', parseInt(p['kl']) || 0];
 
     }
     """,
@@ -398,6 +402,10 @@ app.clientside_callback(
     Output("weather-year",        "value"),
     Output("weather-vars",        "value"),
     Output("municipality-select", "value"),
+    Output("kor-a",               "value"),
+    Output("kor-b",               "value"),
+    Output("kor-how",             "value"),
+    Output("kor-lag",             "value"),
     Input("init-interval", "n_intervals"),
     prevent_initial_call=False,
 )
@@ -454,10 +462,15 @@ def filters_to_url(tab, year, indicators, weather_year, weather_vars, municipali
     Input("kl-muni",               "value"),
     Input("kl-index",              "value"),
     Input("kl-years",              "value"),
+    Input("kor-a",                 "value"),
+    Input("kor-b",                 "value"),
+    Input("kor-how",               "value"),
+    Input("kor-lag",               "value"),
 )
 def render_content(tab, year, indicators, weather_year, weather_vars, municipality, tourism_year,
                    housing_muni, housing_rent, factbook_mode, mig_ind, mig_countries, mig_groups, mig_year,
-                   pol_countries, pol_stage, pol_year, kl_muni, kl_index, kl_years):
+                   pol_countries, pol_stage, pol_year, kl_muni, kl_index, kl_years,
+                   kor_a, kor_b, kor_how, kor_lag):
     data = {
         "tab":          tab          or "uebersicht",
         "year":         year         or DEFAULT_YEAR,
@@ -473,8 +486,11 @@ def render_content(tab, year, indicators, weather_year, weather_vars, municipali
         "mig_year": mig_year,
         "pol_countries": pol_countries, "pol_stage": pol_stage, "pol_year": pol_year,
         "kl_muni": kl_muni, "kl_index": kl_index, "kl_years": kl_years,
+        "kor_a": kor_a, "kor_b": kor_b, "kor_how": kor_how, "kor_lag": kor_lag,
     }
-    if data["tab"] == "klimawandel":
+    if data["tab"] == "korrelation":
+        return tab_korrelation.render_korrelation(data)
+    elif data["tab"] == "klimawandel":
         return tab_klima.render_klima(data)
     elif data["tab"] == "polizei":
         return tab_police.render_police(data)
@@ -508,11 +524,12 @@ def render_content(tab, year, indicators, weather_year, weather_vars, municipali
     Output("filter-migration", "style"),
     Output("filter-police", "style"),
     Output("filter-klima2", "style"),
+    Output("filter-kor", "style"),
     Input("tab-select", "value"),
 )
 def toggle_filters(tab):
     show, hide = {"display": "block"}, {"display": "none"}
-    order = ["wirtschaft", "tourismus", "klima", "wohnen", "factbook", "migration", "polizei", "klimawandel"]
+    order = ["wirtschaft", "tourismus", "klima", "wohnen", "factbook", "migration", "polizei", "klimawandel", "korrelation"]
     return tuple(show if tab == t else hide for t in order)
 
 
