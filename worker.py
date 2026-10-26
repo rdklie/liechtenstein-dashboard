@@ -142,6 +142,30 @@ def run():
             errors.append(f"PX {key}: {e}")
         _time.sleep(1)
 
+    # ── IWF (World Economic Outlook, DataMapper) — höchstens wöchentlich ─────────
+    import imf
+    src, last = db.read_imf_info()
+    if last is not None and (datetime.utcnow() - last).days < imf.REFRESH_DAYS:
+        log.info("--- IWF: Daten sind %d Tage alt, übersprungen ---", (datetime.utcnow() - last).days)
+    else:
+        log.info("--- IWF / WEO (%d Indikatoren) ---", len(imf.INDICATORS))
+        for code, (label, unit) in imf.INDICATORS.items():
+            try:
+                df = imf.fetch_indicator(code)
+                if not df.empty:
+                    db.write_imf(df, code)
+                    log.info("  ✓ %s (%d Werte)", label, len(df))
+                else:
+                    log.warning("  ✗ %s — keine Daten", label)
+            except Exception as e:
+                log.error("  ✗ %s — Fehler: %s", label, e)
+                errors.append(f"IWF {code}: {e}")
+            _time.sleep(imf.PAUSE)
+        try:
+            db.write_imf_meta("WEO", imf.fetch_meta("NGDPD")["source"])
+        except Exception as e:
+            log.warning("IWF-Meta nicht lesbar: %s", e)
+
     # ── Zusammenfassung ───────────────────────────────────────────────────────
     log.info("=" * 60)
     if errors:

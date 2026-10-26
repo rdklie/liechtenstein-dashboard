@@ -116,6 +116,34 @@ def run() -> int:
 
     probes = probe_portals()
 
+    # IWF: liefert DataMapper weitere Indikatoren für Liechtenstein als die eingebundenen?
+    try:
+        import imf
+        imf_hits = imf.probe_all_indicators()
+        for code, (label, n) in sorted(imf_hits.items()):
+            if code not in imf.INDICATORS:
+                events.append({"event": "iwf-neuer-indikator", "ref": code, "title": label, "detail": f"{n} Werte für LIE"})
+        for code in imf.INDICATORS:
+            if code not in imf_hits:
+                events.append({"event": "iwf-indikator-ohne-daten", "ref": code, "title": imf.INDICATORS[code][0],
+                               "detail": "keine Werte mehr für LIE"})
+        probes.append((f"IWF DataMapper: {len(imf_hits)} Indikatoren mit LIE-Werten", "ok"))
+    except Exception as e:
+        log.warning("IWF-Prüfung fehlgeschlagen: %s", e)
+        probes.append(("IWF DataMapper", f"Fehler ({type(e).__name__})"))
+
+    # Amtsstellen: Organisationen des Katalogs; Datensätze ohne eigenen Herausgeber melden
+    orgs = opendata.fetch_orgs()
+    old_orgs = set(db.read_orgs()["name"]) if not db.read_orgs().empty else set()
+    if old_orgs:
+        for name in sorted(set(o["name"] for o in orgs.values()) - old_orgs):
+            events.append({"event": "neue-amtsstelle", "ref": name, "title": name, "detail": "Organisation im Katalog"})
+    new_keys = {e["ref"] for e in events if e["event"] == "neu"}
+    for r in records:
+        if r["publisher_source"] != "Katalog" and r["key"] in new_keys:        # nur bei neuen Datensätzen melden
+            events.append({"event": "herausgeber-abgeleitet", "ref": r["key"], "title": r["title"],
+                           "detail": f"{r['publisher']} ({r['publisher_source']})"})
+    db.write_orgs(list(orgs.values()))
     db.write_catalog(records)
     db.write_discovery_log(events)
 

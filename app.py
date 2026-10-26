@@ -33,6 +33,8 @@ from ui import (
     BG, SURFACE, SURFACE2, BORDER, TEXT, MUTED, GREEN, ACCENT, MUNI_PALETTE,
     SOURCES, _styled, _card, _kpi, _empty, _source_bar,
 )
+import tab_factbook
+import tab_imf
 import tab_opendata
 import tab_wohnen
 from db import (
@@ -132,11 +134,11 @@ HEADER = html.Div(
                     html.Span("🇱🇮", style={"fontSize": "2rem", "marginRight": "12px"}),
                     html.Div([
                         html.H1("Liechtenstein Dashboard", className="header-title"),
-                        html.P("Wirtschaft · Bevölkerung · Klima · Tourismus · Wohnen · Open Data", className="header-sub"),
+                        html.P("Wirtschaft · Bevölkerung · Klima · Tourismus · Wohnen · Open Data · Factbook · IWF", className="header-sub"),
                     ]),
                 ], className="header-left"),
                 html.Div([
-                    html.Div("Datenquellen: World Bank · Open-Meteo · Eurostat · OSM · opendata.li", className="header-badge"),
+                    html.Div("Datenquellen: World Bank · Open-Meteo · Eurostat · OSM · opendata.li · IWF · CIA Factbook (Archiv)", className="header-badge"),
                 ], className="header-right"),
             ],
             className="header-content",
@@ -185,6 +187,8 @@ def _build_sidebar() -> html.Div:
                                 dcc.Tab(label="Tourismus",  value="tourismus",  className="stab", selected_className="stab-selected"),
                                 dcc.Tab(label="Wohnen",     value="wohnen",     className="stab", selected_className="stab-selected"),
                                 dcc.Tab(label="Open Data",  value="opendata",   className="stab", selected_className="stab-selected"),
+                                dcc.Tab(label="Factbook",   value="factbook",   className="stab", selected_className="stab-selected"),
+                                dcc.Tab(label="IWF",        value="imf",        className="stab", selected_className="stab-selected"),
                             ],
                         ),
                     ], className="filter-section"),
@@ -277,6 +281,7 @@ def _build_sidebar() -> html.Div:
 
                     # ── Housing filters ──────────────────────────────────────
                     tab_wohnen.sidebar_section(),
+                    tab_factbook.sidebar_section(),
 
                     html.Hr(className="filter-hr"),
 
@@ -429,9 +434,10 @@ def filters_to_url(tab, year, indicators, weather_year, weather_vars, municipali
     Input("tourism-year-slider",   "value"),
     Input("housing-muni",          "value"),
     Input("housing-rent",          "value"),
+    Input("factbook-mode",         "value"),
 )
 def render_content(tab, year, indicators, weather_year, weather_vars, municipality, tourism_year,
-                   housing_muni, housing_rent):
+                   housing_muni, housing_rent, factbook_mode):
     data = {
         "tab":          tab          or "uebersicht",
         "year":         year         or DEFAULT_YEAR,
@@ -442,8 +448,13 @@ def render_content(tab, year, indicators, weather_year, weather_vars, municipali
         "tourism_year": tourism_year or [1995, 2024],
         "housing_muni": housing_muni,
         "housing_rent": housing_rent,
+        "factbook_mode": factbook_mode,
     }
-    if data["tab"] == "wohnen":
+    if data["tab"] == "imf":
+        return tab_imf.render_imf()
+    elif data["tab"] == "factbook":
+        return tab_factbook.render_factbook(data)
+    elif data["tab"] == "wohnen":
         return tab_wohnen.render_wohnen(data)
     elif data["tab"] == "opendata":
         return tab_opendata.render_opendata()
@@ -463,15 +474,17 @@ def render_content(tab, year, indicators, weather_year, weather_vars, municipali
     Output("filter-tourism",  "style"),
     Output("filter-climate",  "style"),
     Output("filter-housing",  "style"),
+    Output("filter-factbook", "style"),
     Input("tab-select", "value"),
 )
 def toggle_filters(tab):
     show, hide = {"display": "block"}, {"display": "none"}
-    if tab == "wirtschaft": return show, hide, hide, hide
-    if tab == "tourismus":  return hide, show, hide, hide
-    if tab == "klima":      return hide, hide, show, hide
-    if tab == "wohnen":     return hide, hide, hide, show
-    return hide, hide, hide, hide
+    if tab == "wirtschaft": return show, hide, hide, hide, hide
+    if tab == "tourismus":  return hide, show, hide, hide, hide
+    if tab == "klima":      return hide, hide, show, hide, hide
+    if tab == "wohnen":     return hide, hide, hide, show, hide
+    if tab == "factbook":   return hide, hide, hide, hide, show
+    return hide, hide, hide, hide, hide
 
 
 # 4. Copy-Button Feedback
@@ -618,6 +631,8 @@ def _render_overview(data: dict):
             _source_info_row("fa-chart-bar",   "Amt für Statistik Liechtenstein", "https://www.llv.li/de/landesverwaltung/amt-fuer-statistik", "Tourismus, Sektoren, Bevölkerung"),
             _source_info_row("fa-university",  "Eurostat",                        "https://ec.europa.eu/eurostat",                 "BIP & Wirtschaftsstatistik (EWR)"),
             _source_info_row("fa-map-marked-alt", "OpenStreetMap / Overpass API", "https://www.openstreetmap.org/",               "Points of Interest in Liechtenstein"),
+            _source_info_row("fa-landmark", "IWF – World Economic Outlook", "https://www.imf.org/external/datamapper", "15 Indikatoren für Liechtenstein (Schätzungen/Projektionen; kein IWF-Mitglied)"),
+            _source_info_row("fa-box-archive", "CIA World Factbook (Archiv 1990–2025)", "https://www.cia.gov/the-world-factbook/", "Liechtenstein in allen Ausgaben, gemeinfrei, eingestellt 2026"),
             _source_info_row("fa-folder-open", "opendata.li (Amt für Statistik)", "https://www.opendata.li/de/daten",              "Wohnen, Mieten, Bautätigkeit und ca. 460 weitere Tabellen (CC BY)"),
         ], className="info-list"),
         html.Small(

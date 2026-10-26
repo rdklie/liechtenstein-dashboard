@@ -12,6 +12,8 @@ Live unter <https://daten.li>.
 | `opendata.py` | Anbindung opendata.li: Katalog (EntryStore/DCAT) und PXWeb-API des Amts für Statistik |
 | `discover.py` | Wöchentlicher Discovery-Crawler: meldet neue/geänderte/entfernte Datensätze |
 | `tab_wohnen.py`, `tab_opendata.py` | Tabs «Wohnen & Immobilien» und «Open Data» (Explorer) |
+| `tab_factbook.py`, `factbook_import.py` | Tab «Factbook» (CIA World Factbook, Archiv 1990–2025) und der einmalige Import |
+| `tab_imf.py`, `imf.py` | Tab «IWF» (World Economic Outlook, DataMapper API) |
 | `ui.py` | Gemeinsame Farben/Diagramm-Helfer |
 | `deploy/` | Deployment nach cyon |
 
@@ -29,11 +31,36 @@ Statistik, abrufbar über die PXWeb-API `https://etab.llv.li/PXWeb/api/v1/de/eTa
   Durchschnitte pro Wohnung und Monat, keine m²-Preise.
 - **Tab «Open Data»:** Explorer über den ganzen Katalog (Tabelle suchen, Achsen/Gruppierung/Filter wählen, Diagramm, Vorschau, CSV).
   Tabellen, die nicht im Cache liegen oder älter als 7 Tage sind, werden einmalig live geladen und gespeichert.
+- **Amtsstelle (Herausgeber):** Der Katalog führt je Datensatz einen Herausgeber (`dct:publisher`, Organisationen als `foaf:Organization`):
+  Amt für Statistik 464, Amt für Tiefbau und Geoinformation 25, Finanzmarktaufsicht Liechtenstein 6 (Amt für Hochbau und Raumplanung ist als
+  Organisation geführt, hat aber keine Datensätze). Fehlt er, wird die Amtsstelle aus dem Katalog-Bereich (EntryStore-Context) abgeleitet
+  und in `od_catalog.publisher_source` als «abgeleitet» markiert; sonst «Nicht zuordenbar» (aktuell keine). 31 Katalogeinträge sind leer
+  (ohne Titel/Metadaten) und werden übersprungen. Der Filter (Amtsstelle · Art · Thema · Suche) gilt für Explorer-Dropdown und Trefferliste,
+  auch für Geodaten/Dateien (diese sind verlinkt, nicht darstellbar).
 - **Discovery:** `discover.py` (Cron sonntags 05:30 UTC, manuell `~/daten-li/bin/run-discover.sh`) liest Katalog und PXWeb-Baum, vergleicht
   mit dem letzten Stand (`od_catalog`) und meldet neu/geändert/entfernt/«PX-Tabelle nicht im Katalog» in `od_discovery_log`,
   `~/daten-li/data/discovery-report.md` und im Tab «Open Data». Er veröffentlicht nichts automatisch.
 - **Rücksicht auf die APIs:** ≥ 0,4 s Pause je Request, Retries mit Backoff, grosse Tabellen werden auf ≤ 40 000 Zellen reduziert;
   die App ruft die APIs nur beim Explorer-Livezugriff auf.
+
+## World Factbook (Archiv)
+
+Das CIA World Factbook wurde am 4. Feb. 2026 eingestellt (cia.gov leitet nur noch auf eine Abschiedsseite). Der Tab «Factbook» zeigt Liechtenstein
+über alle 36 Ausgaben 1990–2025: Kennzahlen als Zeitreihen (nach Bezugsjahr oder nach Ausgabe) und eine Text-Chronik je Feld.
+`factbook_import.py` (einmalig, `deploy.ps1 -ImportFactbook`, kein Cron) lädt die SQL-Dumps des Archiv-Datenbestands
+[MilkMp/CIA-World-Factbooks-Archive-1990-2025](https://github.com/MilkMp/CIA-World-Factbooks-Archive-1990-2025) (MIT; die Daten sind gemeinfrei) von GitHub,
+filtert Liechtenstein (FIPS `ls`), legt die Rohdaten als `~/daten-li/data/archive/factbook/liechtenstein_<Jahr>.json` + `manifest.json` (URLs, SHA-256) ab
+und schreibt `factbook_fields` (Rohtext) und `factbook_values` (geparste Kennzahlen mit Ausgabe- und Bezugsjahr) nach SQLite.
+`worldfactbookarchive.org` selbst wird nicht abgerufen: die robots.txt der Seite sperrt KI-Crawler (u. a. `anthropic-ai`, `claudebot`).
+Parser-Grenzen: Bezugsjahre stehen im Text (z. B. «(2024 est.)») und liegen oft vor dem Ausgabejahr; Definitionen wechseln (ab 2021 «Real GDP», Preise 2015).
+
+## IWF (World Economic Outlook)
+
+`imf.py` holt über die DataMapper-API (`/api/v1/<Indikator>/LIE`) die 15 Indikatoren, für die der IWF Werte zu Liechtenstein führt
+(BIP, BIP/Kopf, Wachstum, Inflation, Arbeitslosigkeit, Leistungsbilanz, Staatshaushalt/-schulden, Bevölkerung; Jahre 2000–2031, ab dem Ausgabejahr Projektionen).
+Liechtenstein ist kein IWF-Mitglied — es sind IWF-Schätzungen. Der Worker aktualisiert höchstens wöchentlich (15 Abrufe, 1 s Pause); `discover.py`
+prüft wöchentlich alle 132 Indikatoren auf neue LIE-Werte. Quelle/Lizenz: International Monetary Fund, World Economic Outlook — Quellenangabe, nicht-kommerzielle Nutzung
+([Bedingungen](https://www.imf.org/en/About/Copyright-and-Terms)); keine automatisierten Massendownloads, kein LLM-Training.
 
 ## Lokal starten
 

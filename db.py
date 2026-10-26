@@ -16,6 +16,9 @@ Tabellen:
   px_cache              — Tabellen des Amts für Statistik (PXWeb/opendata.li), komprimiert als JSON
   od_catalog            — Katalog von opendata.li (Discovery-Crawler)
   od_discovery_log      — Funde des Discovery-Crawlers (neu/entfernt/geändert)
+  factbook_fields       — CIA World Factbook (Archiv 1990–2025), Rohtext je Jahr/Feld, Liechtenstein
+  factbook_values       — daraus geparste Kennzahlen je Jahr (Zeitreihen)
+  imf_data              — IWF DataMapper: Indikatoren für Liechtenstein (falls vorhanden)
 """
 
 import base64
@@ -28,7 +31,7 @@ from functools import lru_cache
 from pathlib import Path
 
 import pandas as pd
-from sqlalchemy import create_engine, event, text
+from sqlalchemy import create_engine, event, inspect, text
 
 log = logging.getLogger(__name__)
 
@@ -137,8 +140,45 @@ CREATE TABLE IF NOT EXISTS od_catalog (
     catalog_url TEXT,
     theme       TEXT,
     subtheme    TEXT,
+    publisher   TEXT,
+    publisher_source TEXT,
     first_seen  TEXT,
     last_seen   TEXT
+);
+
+CREATE TABLE IF NOT EXISTS od_orgs (
+    name        TEXT PRIMARY KEY,
+    homepage    TEXT,
+    email       TEXT
+);
+
+CREATE TABLE IF NOT EXISTS factbook_fields (
+    year        INTEGER,
+    category    TEXT,
+    field       TEXT,
+    content     TEXT
+);
+
+CREATE TABLE IF NOT EXISTS factbook_values (
+    year        INTEGER NOT NULL,
+    indicator   TEXT    NOT NULL,
+    ref_year    INTEGER NOT NULL,
+    value       FLOAT,
+    unit        TEXT,
+    PRIMARY KEY (year, indicator, ref_year)
+);
+
+CREATE TABLE IF NOT EXISTS imf_data (
+    indicator   TEXT    NOT NULL,
+    year        INTEGER NOT NULL,
+    value       FLOAT,
+    fetched_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (indicator, year)
+);
+
+CREATE TABLE IF NOT EXISTS imf_meta (
+    indicator   TEXT PRIMARY KEY,
+    source      TEXT
 );
 
 CREATE TABLE IF NOT EXISTS od_discovery_log (
@@ -151,12 +191,26 @@ CREATE TABLE IF NOT EXISTS od_discovery_log (
 """
 
 
+# Spalten, die nach dem ersten Release dazukamen (CREATE IF NOT EXISTS ändert bestehende Tabellen nicht)
+_ADDED_COLUMNS = {
+    "od_catalog": [("publisher", "TEXT"), ("publisher_source", "TEXT")],
+}
+
+
 def _create_tables(engine):
     with engine.connect() as conn:
         for stmt in DDL.strip().split(";"):
             stmt = stmt.strip()
             if stmt:
                 conn.execute(text(stmt))
+        conn.commit()
+    insp = inspect(engine)
+    with engine.connect() as conn:
+        for table, cols in _ADDED_COLUMNS.items():
+            have = {c["name"] for c in insp.get_columns(table)}
+            for name, typ in cols:
+                if name not in have:
+                    conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {name} {typ}"))
         conn.commit()
 
 
@@ -327,7 +381,7 @@ def get_px(path: str, max_age_hours: float | None = 24 * 7, allow_live: bool = F
 
 
 CATALOG_COLS = ["key", "title", "description", "modified", "kind", "px_path", "formats",
-                "license", "landing_url", "catalog_url", "theme", "subtheme"]
+                "license", "landing_url", "catalog_url", "theme", "subtheme", "publisher", "publisher_source"]
 
 
 def write_catalog(records: list[dict]):
@@ -352,6 +406,20 @@ def write_catalog(records: list[dict]):
     log.info("od_catalog geschrieben (%d Einträge)", len(rows))
 
 
+def write_orgs(orgs: list[dict]):
+    engine = _get_engine()
+    if engine is None or not orgs:
+        return
+    with engine.connect() as conn:
+        conn.execute(text("DELETE FROM od_orgs"))
+        conn.commit()
+    pd.DataFrame(orgs).drop_duplicates("name").to_sql("od_orgs", engine, if_exists="append", index=False, method="multi")
+
+
+def read_orgs() -> pd.DataFrame:
+    return _read("SELECT name, homepage, email FROM od_orgs ORDER BY name")
+
+
 def read_catalog() -> pd.DataFrame:
     return _read("SELECT * FROM od_catalog ORDER BY theme, subtheme, key")
 
@@ -368,6 +436,62 @@ def write_discovery_log(events: list[dict]):
 
 def read_discovery_log(limit: int = 50) -> pd.DataFrame:
     return _read("SELECT * FROM od_discovery_log ORDER BY run_at DESC LIMIT :n", {"n": limit})
+
+
+def write_factbook(fields: pd.DataFrame, values: pd.DataFrame):
+    """Ersetzt den kompletten Factbook-Archivbestand (einmaliger Import, siehe factbook_import.py)."""
+    engine = _get_engine()
+    if engine is None or fields.empty:
+        return
+    with engine.connect() as conn:
+        conn.execute(text("DELETE FROM factbook_fields"))
+        conn.execute(text("DELETE FROM factbook_values"))
+        conn.commit()
+    fields.to_sql("factbook_fields", engine, if_exists="append", index=False, method="multi", chunksize=500)
+    if not values.empty:
+        values.to_sql("factbook_values", engine, if_exists="append", index=False, method="multi", chunksize=500)
+
+
+def read_factbook_values() -> pd.DataFrame:
+    return _read("SELECT year, indicator, ref_year, value, unit FROM factbook_values ORDER BY indicator, ref_year, year")
+
+
+def read_factbook_fields(field: str | None = None) -> pd.DataFrame:
+    if field:
+        return _read("SELECT year, category, field, content FROM factbook_fields WHERE field = :f ORDER BY year", {"f": field})
+    return _read("SELECT year, category, field, content FROM factbook_fields ORDER BY year")
+
+
+def write_imf(df: pd.DataFrame, indicator: str):
+    """df: Spalten year, value."""
+    if df.empty:
+        return
+    d = df[["year", "value"]].copy()
+    d["indicator"] = indicator
+    _upsert_dataframe(d, "imf_data", ["indicator", "year"])
+
+
+def read_imf(indicator: str) -> pd.DataFrame:
+    return _read("SELECT year, value FROM imf_data WHERE indicator = :i ORDER BY year", {"i": indicator})
+
+
+def write_imf_meta(indicator: str, source: str):
+    engine = _get_engine()
+    if engine is None:
+        return
+    with engine.connect() as conn:
+        conn.execute(text("DELETE FROM imf_meta WHERE indicator = :i"), {"i": indicator})
+        conn.execute(text("INSERT INTO imf_meta (indicator, source) VALUES (:i, :s)"), {"i": indicator, "s": source})
+        conn.commit()
+
+
+def read_imf_info() -> tuple[str, datetime | None]:
+    """→ (Quelle/WEO-Ausgabe, ältester Abrufzeitpunkt) aus imf_meta/imf_data."""
+    meta = _read("SELECT source FROM imf_meta LIMIT 1")
+    ts = _read("SELECT MIN(fetched_at) AS t FROM imf_data")
+    src = meta["source"].iloc[0] if not meta.empty else ""
+    t = pd.to_datetime(ts["t"].iloc[0]).to_pydatetime() if not ts.empty and pd.notna(ts["t"].iloc[0]) else None
+    return src, t
 
 
 # ── Read-Funktionen (nur von app.py verwendet) ────────────────────────────────

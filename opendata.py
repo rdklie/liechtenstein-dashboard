@@ -217,6 +217,32 @@ def _fix(s: str) -> str:
     return s
 
 
+# Falls ein Eintrag keinen Herausgeber trägt, wird er aus dem Kontext (Katalog-Bereich) des Eintrags abgeleitet:
+# im EntryStore gehört jeder Katalog-Bereich genau einer Amtsstelle.
+CONTEXT_PUBLISHER = {
+    "29": "Amt für Statistik",
+    "24": "Amt für Tiefbau und Geoinformation",
+    "13": "Finanzmarktaufsicht Liechtenstein",
+}
+UNKNOWN_PUBLISHER = "Nicht zuordenbar"
+
+
+def fetch_orgs() -> dict[str, dict]:
+    """{Organisations-URI: {name, homepage, email}} aus dem Katalog (foaf:Organization)."""
+    orgs = {}
+    for e in _search("http://xmlns.com/foaf/0.1/Organization"):
+        uri = next(iter(e["metadata"]))
+        md = next(iter(e["metadata"].values()))
+        name = _fix(_lit(md, "http://xmlns.com/foaf/0.1/name"))
+        if name:
+            orgs[uri] = {
+                "name": name,
+                "homepage": (md.get("http://xmlns.com/foaf/0.1/homepage") or [{}])[0].get("value", ""),
+                "email": (md.get("http://xmlns.com/foaf/0.1/mbox") or [{}])[0].get("value", "").replace("mailto:", ""),
+            }
+    return orgs
+
+
 def fetch_catalog() -> list[dict]:
     """
     Liest den kompletten Katalog (Datensätze + Distributionen) und gibt flache Records zurück:
@@ -224,6 +250,8 @@ def fetch_catalog() -> list[dict]:
     license, landing_url, catalog_url, publisher.
     """
     datasets = _search("http://www.w3.org/ns/dcat#Dataset")
+    time.sleep(PAUSE)
+    orgs = fetch_orgs()
     time.sleep(PAUSE)
     dists = {}
     for e in _search("http://www.w3.org/ns/dcat#Distribution"):
@@ -249,6 +277,13 @@ def fetch_catalog() -> list[dict]:
             m = re.search(r"/api/v1/de/eTab/+(.+)$", url, re.I)
             if fmt == "json" and m and not px_path:
                 px_path = urllib.parse.unquote(m.group(1))
+        pub_uri = (md.get(_DCT + "publisher") or [{}])[0].get("value", "")
+        if pub_uri in orgs:
+            publisher, pub_source = orgs[pub_uri]["name"], "Katalog"
+        elif e.get("contextId") in CONTEXT_PUBLISHER:
+            publisher, pub_source = CONTEXT_PUBLISHER[e["contextId"]], "abgeleitet (Katalog-Bereich)"
+        else:
+            publisher, pub_source = UNKNOWN_PUBLISHER, "fehlt im Katalog"
         page = (md.get("http://xmlns.com/foaf/0.1/page") or [{}])[0].get("value", "")
         landing = (md.get(_DCAT + "landingPage") or [{}])[0].get("value", "")
         modified = (md.get(_DCT + "modified") or [{}])[0].get("value", "")[:10]
@@ -271,6 +306,8 @@ def fetch_catalog() -> list[dict]:
             "license": license_.rsplit("/", 1)[-1],
             "landing_url": landing,
             "catalog_url": page or uri,
+            "publisher": publisher,
+            "publisher_source": pub_source,
             "theme": px_path.split("/")[0] if px_path else "",
             "subtheme": px_path.split("/")[1] if px_path.count("/") >= 2 else "",
         })
