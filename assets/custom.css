@@ -543,3 +543,31 @@ hr.filter-hr {
   .header-title { font-size: 1.1rem !important; }
   .kpi-value { font-size: 0.95rem !important; }
 }
+
+/* ── Open-Data-Tabellen (Explorer, Katalog, Discovery) ─────────── */
+.od-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.78rem;
+  color: #E6EDF3;
+}
+.od-table th {
+  position: sticky;
+  top: 0;
+  background: #1C2128;
+  color: #8B949E;
+  font-weight: 600;
+  text-align: left;
+  padding: 6px 8px;
+  border-bottom: 1px solid #30363D;
+}
+.od-table td {
+  padding: 5px 8px;
+  border-bottom: 1px solid #21262D;
+  vertical-align: top;
+}
+.od-table tr:hover td { background: #161B22; }
+
+/* Sechs Bereiche: Tab-Leiste in der Sidebar umbrechen statt abschneiden */
+.sidebar-tabs { display: flex !important; flex-wrap: wrap !important; }
+.sidebar-tabs .stab { flex: 0 0 auto !important; }

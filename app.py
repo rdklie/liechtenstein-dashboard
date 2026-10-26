@@ -28,6 +28,13 @@ from data_fetcher import (
     MUNICIPALITIES,
     OSM_CATEGORIES,
 )
+from ui import (
+    FL_BLUE, FL_RED, FL_GOLD, FL_BLUE_10, FL_BLUE_13, FL_RED_13,
+    BG, SURFACE, SURFACE2, BORDER, TEXT, MUTED, GREEN, ACCENT, MUNI_PALETTE,
+    SOURCES, _styled, _card, _kpi, _empty, _source_bar,
+)
+import tab_opendata
+import tab_wohnen
 from db import (
     get_world_bank,
     get_weather_monthly,
@@ -38,34 +45,12 @@ from db import (
 )
 
 # ── Constants ────────────────────────────────────────────────────────────────
-FL_BLUE   = "#002B7F"
-FL_RED    = "#CE1126"
-FL_GOLD   = "#D4A017"
-
-# rgba-Varianten für Plotly-fillcolor (Plotly 6 akzeptiert kein 8-stelliges Hex)
-FL_BLUE_10 = "rgba(0,43,127,0.10)"
-FL_BLUE_13 = "rgba(0,43,127,0.13)"
-FL_RED_13  = "rgba(206,17,38,0.13)"
-BG        = "#0D1117"
-SURFACE   = "#161B22"
-SURFACE2  = "#1C2128"
-BORDER    = "#30363D"
-TEXT      = "#E6EDF3"
-MUTED     = "#8B949E"
-GREEN     = "#3FB950"
-ACCENT    = "#58A6FF"
-
 DEFAULT_INDICATORS   = ["NY.GDP.MKTP.CD", "NY.GDP.PCAP.CD"]
 DEFAULT_YEAR         = [2000, 2023]
 DEFAULT_WEATHER_Y    = 2024
 DEFAULT_WEATHER_V    = ["temp_max", "temp_min"]
 DEFAULT_MUNICIPALITY = ["vaduz"]
 
-# Farb-Palette für Gemeinde-Vergleich (bis zu 11 Gemeinden)
-MUNI_PALETTE = [
-    FL_BLUE, FL_RED, FL_GOLD, ACCENT, GREEN,
-    "#BB8FCE", "#F0883E", "#58D68D", "#F85149", "#79C0FF", "#D2A679",
-]
 WEATHER_YEARS        = list(range(2020, 2026))
 
 # Wirtschaftssektoren Liechtenstein (Quelle: Amt für Statistik FL)
@@ -115,97 +100,6 @@ app = dash.Dash(
 server = app.server
 
 
-# ── Chart helpers ─────────────────────────────────────────────────────────────
-
-def _styled(fig: go.Figure, title: str = "", legend: bool = True) -> go.Figure:
-    fig.update_layout(
-        title=dict(text=title, font=dict(size=15, color=TEXT), x=0.0, xanchor="left"),
-        paper_bgcolor="rgba(0,0,0,0)",
-        plot_bgcolor="rgba(0,0,0,0)",
-        font=dict(color=TEXT, family="Inter, sans-serif", size=12),
-        xaxis=dict(gridcolor=BORDER, zerolinecolor=BORDER, tickfont=dict(color=MUTED)),
-        yaxis=dict(gridcolor=BORDER, zerolinecolor=BORDER, tickfont=dict(color=MUTED)),
-        legend=dict(
-            bgcolor="rgba(22,27,34,0.92)",
-            bordercolor=BORDER,
-            font=dict(color=TEXT),
-        ) if legend else dict(visible=False),
-        hoverlabel=dict(
-            bgcolor=SURFACE2,
-            bordercolor=BORDER,
-            font=dict(color=TEXT, family="Inter, sans-serif", size=12),
-        ),
-        margin=dict(l=50, r=20, t=50 if title else 30, b=50),
-        hovermode="x unified",
-    )
-    return fig
-
-
-def _card(children, className=""):
-    return html.Div(children, className=f"dash-card {className}")
-
-
-def _kpi(icon, title, value, color=FL_BLUE, subtitle=""):
-    return _card(
-        [
-            html.Div(
-                html.I(className=f"fas {icon} fa-lg"),
-                className="kpi-icon",
-                style={"background": f"{color}28", "color": color},
-            ),
-            html.Div([
-                html.P(title, className="kpi-label"),
-                html.H4(value, className="kpi-value"),
-                html.Small(subtitle, className="kpi-sub") if subtitle else None,
-            ]),
-        ],
-        "kpi-card",
-    )
-
-
-def _empty(msg="Keine Daten verfügbar"):
-    return html.Div(
-        [html.I(className="fas fa-chart-bar fa-2x mb-3", style={"color": MUTED}),
-         html.P(msg, style={"color": MUTED})],
-        className="empty-state",
-    )
-
-
-# Bekannte Datenquellen mit URLs
-SOURCES = {
-    "worldbank":   ("World Bank Open Data",           "https://data.worldbank.org/country/LI"),
-    "openmeteo":   ("Open-Meteo Archive API",         "https://open-meteo.com/"),
-    "amtstat":     ("Amt für Statistik Liechtenstein","https://www.llv.li/de/landesverwaltung/amt-fuer-statistik"),
-    "eurostat":    ("Eurostat",                       "https://ec.europa.eu/eurostat"),
-    "osm":         ("OpenStreetMap",                  "https://www.openstreetmap.org/"),
-    "overpass":    ("Overpass API",                   "https://overpass-api.de/"),
-}
-
-
-def _source_bar(*source_keys: str, extra: str = "") -> html.Div:
-    """
-    Rendert eine einheitliche Quellenzeile mit klickbaren Links.
-    Beispiel: _source_bar("worldbank", "amtstat")
-    """
-    parts = []
-    for i, key in enumerate(source_keys):
-        name, url = SOURCES[key]
-        if i > 0:
-            parts.append(html.Span(" · ", style={"color": BORDER}))
-        parts.append(html.A(
-            name, href=url, target="_blank", rel="noopener noreferrer",
-            className="source-link",
-        ))
-    if extra:
-        parts.append(html.Span(f" · {extra}", style={"color": MUTED}))
-    return html.Div(
-        [html.I(className="fas fa-database", style={"marginRight": "6px", "color": MUTED}),
-         html.Span("Quelle: ", style={"color": MUTED}),
-         *parts],
-        className="source-bar",
-    )
-
-
 def _build_url(store: dict) -> str:
     if not store:
         return ""
@@ -238,11 +132,11 @@ HEADER = html.Div(
                     html.Span("🇱🇮", style={"fontSize": "2rem", "marginRight": "12px"}),
                     html.Div([
                         html.H1("Liechtenstein Dashboard", className="header-title"),
-                        html.P("Wirtschaft · Bevölkerung · Klima · Tourismus", className="header-sub"),
+                        html.P("Wirtschaft · Bevölkerung · Klima · Tourismus · Wohnen · Open Data", className="header-sub"),
                     ]),
                 ], className="header-left"),
                 html.Div([
-                    html.Div("Datenquellen: World Bank · Open-Meteo · Eurostat · OSM", className="header-badge"),
+                    html.Div("Datenquellen: World Bank · Open-Meteo · Eurostat · OSM · opendata.li", className="header-badge"),
                 ], className="header-right"),
             ],
             className="header-content",
@@ -289,6 +183,8 @@ def _build_sidebar() -> html.Div:
                                 dcc.Tab(label="Wirtschaft", value="wirtschaft", className="stab", selected_className="stab-selected"),
                                 dcc.Tab(label="Klima",      value="klima",      className="stab", selected_className="stab-selected"),
                                 dcc.Tab(label="Tourismus",  value="tourismus",  className="stab", selected_className="stab-selected"),
+                                dcc.Tab(label="Wohnen",     value="wohnen",     className="stab", selected_className="stab-selected"),
+                                dcc.Tab(label="Open Data",  value="opendata",   className="stab", selected_className="stab-selected"),
                             ],
                         ),
                     ], className="filter-section"),
@@ -378,6 +274,9 @@ def _build_sidebar() -> html.Div:
                             ),
                         ], className="filter-section"),
                     ]),
+
+                    # ── Housing filters ──────────────────────────────────────
+                    tab_wohnen.sidebar_section(),
 
                     html.Hr(className="filter-hr"),
 
@@ -528,8 +427,11 @@ def filters_to_url(tab, year, indicators, weather_year, weather_vars, municipali
     Input("weather-vars",          "value"),
     Input("municipality-select",   "value"),
     Input("tourism-year-slider",   "value"),
+    Input("housing-muni",          "value"),
+    Input("housing-rent",          "value"),
 )
-def render_content(tab, year, indicators, weather_year, weather_vars, municipality, tourism_year):
+def render_content(tab, year, indicators, weather_year, weather_vars, municipality, tourism_year,
+                   housing_muni, housing_rent):
     data = {
         "tab":          tab          or "uebersicht",
         "year":         year         or DEFAULT_YEAR,
@@ -538,8 +440,14 @@ def render_content(tab, year, indicators, weather_year, weather_vars, municipali
         "weather_vars": weather_vars or DEFAULT_WEATHER_V,
         "municipality": (municipality if isinstance(municipality, list) else [municipality]) if municipality else DEFAULT_MUNICIPALITY,
         "tourism_year": tourism_year or [1995, 2024],
+        "housing_muni": housing_muni,
+        "housing_rent": housing_rent,
     }
-    if data["tab"] == "wirtschaft":
+    if data["tab"] == "wohnen":
+        return tab_wohnen.render_wohnen(data)
+    elif data["tab"] == "opendata":
+        return tab_opendata.render_opendata()
+    elif data["tab"] == "wirtschaft":
         return _render_economy(data)
     elif data["tab"] == "klima":
         return _render_climate(data)
@@ -554,14 +462,16 @@ def render_content(tab, year, indicators, weather_year, weather_vars, municipali
     Output("filter-economy",  "style"),
     Output("filter-tourism",  "style"),
     Output("filter-climate",  "style"),
+    Output("filter-housing",  "style"),
     Input("tab-select", "value"),
 )
 def toggle_filters(tab):
     show, hide = {"display": "block"}, {"display": "none"}
-    if tab == "wirtschaft": return show, hide, hide
-    if tab == "tourismus":  return hide, show, hide
-    if tab == "klima":      return hide, hide, show
-    return hide, hide, hide
+    if tab == "wirtschaft": return show, hide, hide, hide
+    if tab == "tourismus":  return hide, show, hide, hide
+    if tab == "klima":      return hide, hide, show, hide
+    if tab == "wohnen":     return hide, hide, hide, show
+    return hide, hide, hide, hide
 
 
 # 4. Copy-Button Feedback
@@ -708,6 +618,7 @@ def _render_overview(data: dict):
             _source_info_row("fa-chart-bar",   "Amt für Statistik Liechtenstein", "https://www.llv.li/de/landesverwaltung/amt-fuer-statistik", "Tourismus, Sektoren, Bevölkerung"),
             _source_info_row("fa-university",  "Eurostat",                        "https://ec.europa.eu/eurostat",                 "BIP & Wirtschaftsstatistik (EWR)"),
             _source_info_row("fa-map-marked-alt", "OpenStreetMap / Overpass API", "https://www.openstreetmap.org/",               "Points of Interest in Liechtenstein"),
+            _source_info_row("fa-folder-open", "opendata.li (Amt für Statistik)", "https://www.opendata.li/de/daten",              "Wohnen, Mieten, Bautätigkeit und ca. 460 weitere Tabellen (CC BY)"),
         ], className="info-list"),
         html.Small(
             "Alle Daten werden täglich automatisch aktualisiert. "

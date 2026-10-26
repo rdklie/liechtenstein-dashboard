@@ -2,4 +2,5 @@
 CRON_TZ=UTC
 * * * * * $HOME/daten-li/bin/keepalive.sh >/dev/null 2>&1
 0 6 * * * $HOME/daten-li/bin/run-worker.sh
+30 5 * * 0 $HOME/daten-li/bin/run-discover.sh
 # <<< daten-li

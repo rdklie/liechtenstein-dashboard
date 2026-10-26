@@ -13,10 +13,16 @@ Tabellen:
   eurostat_tourism_nights — Übernachtungen (Eurostat)
   eurostat_gdp_eur      — BIP in EUR (Eurostat)
   osm_poi_counts        — Points of Interest (OpenStreetMap)
+  px_cache              — Tabellen des Amts für Statistik (PXWeb/opendata.li), komprimiert als JSON
+  od_catalog            — Katalog von opendata.li (Discovery-Crawler)
+  od_discovery_log      — Funde des Discovery-Crawlers (neu/entfernt/geändert)
 """
 
+import base64
+import json
 import os
 import logging
+import zlib
 from datetime import datetime
 from functools import lru_cache
 from pathlib import Path
@@ -105,6 +111,42 @@ CREATE TABLE IF NOT EXISTS osm_poi_counts (
     category    TEXT PRIMARY KEY,
     count       INTEGER,
     fetched_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS px_cache (
+    path        TEXT PRIMARY KEY,
+    title       TEXT,
+    unit        TEXT,
+    dims        TEXT,
+    reduced     TEXT,
+    n_rows      INTEGER,
+    payload     TEXT,
+    fetched_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS od_catalog (
+    key         TEXT PRIMARY KEY,
+    title       TEXT,
+    description TEXT,
+    modified    TEXT,
+    kind        TEXT,
+    px_path     TEXT,
+    formats     TEXT,
+    license     TEXT,
+    landing_url TEXT,
+    catalog_url TEXT,
+    theme       TEXT,
+    subtheme    TEXT,
+    first_seen  TEXT,
+    last_seen   TEXT
+);
+
+CREATE TABLE IF NOT EXISTS od_discovery_log (
+    run_at      TEXT,
+    event       TEXT,
+    ref         TEXT,
+    title       TEXT,
+    detail      TEXT
 );
 """
 
@@ -206,6 +248,126 @@ def write_osm_poi_counts(counts: dict[str, int]):
         conn.commit()
     df.to_sql("osm_poi_counts", engine, if_exists="append", index=False, method="multi")
     log.info("osm_poi_counts geschrieben (%d Kategorien)", len(counts))
+
+
+# ── Open Data: PX-Tabellen, Katalog, Discovery-Log ────────────────────────────
+
+def _pack_df(df: pd.DataFrame) -> str:
+    """DataFrame → komprimierter JSON-String (Strings bleiben Strings, NaN → null)."""
+    cols = list(df.columns)
+    rows = df.astype(object).where(df.notna(), None).values.tolist()
+    return base64.b64encode(zlib.compress(json.dumps({"c": cols, "r": rows}).encode(), 6)).decode()
+
+
+def _unpack_df(payload: str) -> pd.DataFrame:
+    d = json.loads(zlib.decompress(base64.b64decode(payload)))
+    return pd.DataFrame(d["r"], columns=d["c"])
+
+
+def write_px_cache(path: str, df: pd.DataFrame, info: dict):
+    engine = _get_engine()
+    if engine is None or df.empty:
+        return
+    row = {
+        "path": path, "title": info.get("title", ""), "unit": info.get("unit", ""),
+        "dims": json.dumps(info.get("dims", []), ensure_ascii=False),
+        "reduced": json.dumps(info.get("reduced", []), ensure_ascii=False),
+        "n_rows": len(df), "payload": _pack_df(df), "fetched_at": datetime.utcnow(),
+    }
+    with engine.connect() as conn:
+        conn.execute(text("DELETE FROM px_cache WHERE path = :path"), {"path": path})
+        conn.execute(text(
+            "INSERT INTO px_cache (path, title, unit, dims, reduced, n_rows, payload, fetched_at) "
+            "VALUES (:path, :title, :unit, :dims, :reduced, :n_rows, :payload, :fetched_at)"), row)
+        conn.commit()
+    log.info("px_cache geschrieben: %s (%d Zeilen)", path, len(df))
+
+
+def read_px_cache(path: str):
+    """→ (DataFrame, info-dict, fetched_at: datetime) oder None."""
+    engine = _get_engine()
+    if engine is None:
+        return None
+    try:
+        with engine.connect() as conn:
+            r = conn.execute(text(
+                "SELECT title, unit, dims, reduced, payload, fetched_at FROM px_cache WHERE path = :p"),
+                {"p": path}).fetchone()
+    except Exception as e:
+        log.warning("px_cache-Lesefehler: %s", e)
+        return None
+    if not r:
+        return None
+    fetched = r[5] if isinstance(r[5], datetime) else pd.to_datetime(r[5]).to_pydatetime()
+    info = {"path": path, "title": r[0], "unit": r[1], "dims": json.loads(r[2] or "[]"),
+            "reduced": json.loads(r[3] or "[]"), "fetched_at": fetched}
+    return _unpack_df(r[4]), info, fetched
+
+
+def get_px(path: str, max_age_hours: float | None = 24 * 7, allow_live: bool = False):
+    """
+    PX-Tabelle aus dem SQLite-Cache. Mit allow_live=True wird bei fehlendem/veraltetem Cache
+    live nachgeladen (nur für den Daten-Explorer); bei Fehlern gilt veralteter Cache als Fallback.
+    → (df, info) oder (leerer DataFrame, {}).
+    """
+    cached = read_px_cache(path)
+    fresh = (cached is not None and (max_age_hours is None or
+             (datetime.utcnow() - cached[2]).total_seconds() < max_age_hours * 3600))
+    if fresh or not allow_live:
+        return (cached[0], cached[1]) if cached else (pd.DataFrame(), {})
+    try:
+        from opendata import px_fetch
+        df, info = px_fetch(path)
+        write_px_cache(path, df, info)
+        info["fetched_at"] = datetime.utcnow()
+        return df, info
+    except Exception as e:
+        log.warning("PX-Live-Abruf fehlgeschlagen (%s): %s", path, e)
+        return (cached[0], cached[1]) if cached else (pd.DataFrame(), {})
+
+
+CATALOG_COLS = ["key", "title", "description", "modified", "kind", "px_path", "formats",
+                "license", "landing_url", "catalog_url", "theme", "subtheme"]
+
+
+def write_catalog(records: list[dict]):
+    """Ersetzt den Katalog; first_seen bleibt für bekannte Einträge erhalten."""
+    engine = _get_engine()
+    if engine is None or not records:
+        return
+    now = datetime.utcnow().strftime("%Y-%m-%d")
+    old = read_catalog()
+    first = dict(zip(old["key"], old["first_seen"])) if not old.empty else {}
+    rows, seen = [], set()
+    for r in records:
+        if r["key"] in seen:
+            continue
+        seen.add(r["key"])
+        rows.append({**{c: r.get(c, "") for c in CATALOG_COLS},
+                     "first_seen": first.get(r["key"], now), "last_seen": now})
+    with engine.connect() as conn:
+        conn.execute(text("DELETE FROM od_catalog"))
+        conn.commit()
+    pd.DataFrame(rows).to_sql("od_catalog", engine, if_exists="append", index=False, method="multi")
+    log.info("od_catalog geschrieben (%d Einträge)", len(rows))
+
+
+def read_catalog() -> pd.DataFrame:
+    return _read("SELECT * FROM od_catalog ORDER BY theme, subtheme, key")
+
+
+def write_discovery_log(events: list[dict]):
+    engine = _get_engine()
+    if engine is None or not events:
+        return
+    now = datetime.utcnow().strftime("%Y-%m-%d %H:%M")
+    df = pd.DataFrame([{"run_at": now, "event": e["event"], "ref": e.get("ref", ""),
+                        "title": e.get("title", ""), "detail": e.get("detail", "")} for e in events])
+    df.to_sql("od_discovery_log", engine, if_exists="append", index=False, method="multi")
+
+
+def read_discovery_log(limit: int = 50) -> pd.DataFrame:
+    return _read("SELECT * FROM od_discovery_log ORDER BY run_at DESC LIMIT :n", {"n": limit})
 
 
 # ── Read-Funktionen (nur von app.py verwendet) ────────────────────────────────

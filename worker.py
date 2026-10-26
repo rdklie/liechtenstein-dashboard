@@ -28,6 +28,7 @@ def run():
 
     # DB initialisieren (Tabellen anlegen falls nötig)
     import db
+    import opendata
     db.init_db()
 
     errors = []
@@ -124,6 +125,22 @@ def run():
     except Exception as e:
         log.error("  ✗ OSM — Fehler: %s", e)
         errors.append(f"OSM POI: {e}")
+
+    # ── Open Data (Amt für Statistik, PXWeb) — Wohnen & Immobilien ─────────────
+    # Pro Tabelle 1 GET (Metadaten) + 1 POST; PAUSE in opendata.py schont die API.
+    log.info("--- Open Data / PXWeb (%d Tabellen) ---", len(opendata.CURATED))
+    for key, path in opendata.CURATED.items():
+        try:
+            df, info = opendata.px_fetch(path)
+            if not df.empty:
+                db.write_px_cache(path, df, info)
+                log.info("  ✓ %s (%d Zeilen)", key, len(df))
+            else:
+                log.warning("  ✗ %s — keine Daten", key)
+        except Exception as e:
+            log.error("  ✗ %s — Fehler: %s", key, e)
+            errors.append(f"PX {key}: {e}")
+        _time.sleep(1)
 
     # ── Zusammenfassung ───────────────────────────────────────────────────────
     log.info("=" * 60)

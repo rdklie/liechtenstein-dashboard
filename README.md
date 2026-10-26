@@ -9,7 +9,31 @@ Live unter <https://daten.li>.
 | `data_fetcher.py` | Abruf der externen APIs inkl. Fallbacks bei Rate-Limits (Open-Meteo 429, Eurostat, OSM) |
 | `db.py` | Datenbankschicht, SQLite (optional `DATABASE_URL`, z. B. PostgreSQL) |
 | `worker.py` | Täglicher Datenabruf, schreibt die DB |
+| `opendata.py` | Anbindung opendata.li: Katalog (EntryStore/DCAT) und PXWeb-API des Amts für Statistik |
+| `discover.py` | Wöchentlicher Discovery-Crawler: meldet neue/geänderte/entfernte Datensätze |
+| `tab_wohnen.py`, `tab_opendata.py` | Tabs «Wohnen & Immobilien» und «Open Data» (Explorer) |
+| `ui.py` | Gemeinsame Farben/Diagramm-Helfer |
 | `deploy/` | Deployment nach cyon |
+
+## Open Data & Wohnen
+
+**Quelle:** [opendata.li](https://www.opendata.li/de/daten) (Landesverwaltung). Die Seite lädt den Katalog per EntryScape aus dem
+EntryStore `https://catalog.opendata.li/store/` (DCAT, ~500 Datensätze). Gut 460 davon sind Statistik-Tabellen des Amts für
+Statistik, abrufbar über die PXWeb-API `https://etab.llv.li/PXWeb/api/v1/de/eTab/…` (GET = Metadaten, POST = Daten; das Format
+`json-stat2` liefert dort fehlerhaft nur einen Wert, deshalb wird `json` verwendet). Der Rest sind Geodaten und Dateien.
+**Lizenz:** Namensnennung (CC BY, dcat-ap.ch `terms_by`) — «Amt für Statistik Liechtenstein, opendata.li»; die Quelle steht unter jedem Diagramm.
+
+- **Tab «Wohnen»:** Wohnungsbestand seit 1980, am Stichtag nicht bewohnte Wohnungen (2014–2025), Mietpreise (Volkszählung 2010/2015/2020),
+  Bautätigkeit, jeweils je Gemeinde. Die Tabellen stehen in `opendata.CURATED`; der Worker spiegelt sie täglich nach SQLite (`px_cache`).
+  **Nicht verfügbar:** Kaufpreise und m²-Preise (keine offizielle Quelle; kommerzielle Portale werden nicht ausgewertet). Die Mietpreise sind
+  Durchschnitte pro Wohnung und Monat, keine m²-Preise.
+- **Tab «Open Data»:** Explorer über den ganzen Katalog (Tabelle suchen, Achsen/Gruppierung/Filter wählen, Diagramm, Vorschau, CSV).
+  Tabellen, die nicht im Cache liegen oder älter als 7 Tage sind, werden einmalig live geladen und gespeichert.
+- **Discovery:** `discover.py` (Cron sonntags 05:30 UTC, manuell `~/daten-li/bin/run-discover.sh`) liest Katalog und PXWeb-Baum, vergleicht
+  mit dem letzten Stand (`od_catalog`) und meldet neu/geändert/entfernt/«PX-Tabelle nicht im Katalog» in `od_discovery_log`,
+  `~/daten-li/data/discovery-report.md` und im Tab «Open Data». Er veröffentlicht nichts automatisch.
+- **Rücksicht auf die APIs:** ≥ 0,4 s Pause je Request, Retries mit Backoff, grosse Tabellen werden auf ≤ 40 000 Zellen reduziert;
+  die App ruft die APIs nur beim Explorer-Livezugriff auf.
 
 ## Lokal starten
 
@@ -44,14 +68,14 @@ Aufbau auf dem Server (Account `rdkli@s033.cyon.net`, alles unter `~/daten-li/`,
 (`* * * * *`, `keepalive.sh`) gunicorn auf `127.0.0.1:38517`, und LiteSpeed leitet daten.li per
 `.htaccess` (`RewriteRule … [P]`) darauf weiter. Stürzt der Prozess ab, startet ihn Cron innerhalb einer Minute neu.
 
-**Datenabruf:** Cron `0 6 * * *` mit `CRON_TZ=UTC` (06:00 UTC) ruft `run-worker.sh` → `worker.py`.
+**Datenabruf:** Cron `0 6 * * *` mit `CRON_TZ=UTC` (06:00 UTC) ruft `run-worker.sh` → `worker.py`; sonntags 05:30 UTC läuft `run-discover.sh` → `discover.py`.
 Manuell: `ssh … '~/daten-li/bin/run-worker.sh'` (dauert ca. 3 Min., Log in `~/daten-li/logs/worker.log`).
 
 **Deploy** (PowerShell, SSH-Key `~\.ssh\bnutt_cyon_ed25519`):
 
 ```powershell
 .\deploy\deploy.ps1                         # Code + Abhängigkeiten + Crontab, gunicorn neu starten
-.\deploy\deploy.ps1 -Htaccess -RunWorker    # erster Lauf: zusätzlich .htaccess (Backup .htaccess.bak) + Datenabruf
+.\deploy\deploy.ps1 -Htaccess -RunWorker -RunDiscover   # erster Lauf: zusätzlich .htaccess (Backup .htaccess.bak), Datenabruf, Katalog-Discovery
 ```
 
 **HTTPS:** Das Let's-Encrypt-Zertifikat (daten.li, www.daten.li, dataportal.li, datenportal.li) wird im cyon-Panel
