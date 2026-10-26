@@ -14,6 +14,7 @@ Live unter <https://daten.li>.
 | `tab_wohnen.py`, `tab_opendata.py` | Tabs «Wohnen & Immobilien» und «Open Data» (Explorer) |
 | `tab_factbook.py`, `factbook_import.py` | Tab «Factbook» (CIA World Factbook, Archiv 1990–2025) und der einmalige Import |
 | `tab_imf.py`, `imf.py` | Tab «IWF» (World Economic Outlook, DataMapper API) |
+| `tab_migration.py`, `migration.py` | Tab «Migration»: Anteile, Liechtenstein im Detail, Wanderung/Einbürgerung/Asyl, Straffälligkeit |
 | `ui.py` | Gemeinsame Farben/Diagramm-Helfer |
 | `deploy/` | Deployment nach cyon |
 
@@ -71,6 +72,27 @@ Liechtenstein ist seit dem 21. Oktober 2024 IWF-Mitglied (191. Mitglied; Quelle:
 - `discover.py` prüft wöchentlich beide Wege auf neue Indikatoren/Datenflüsse (`iwf-neuer-indikator`, `iwf-neuer-datenfluss`) — es wird nichts automatisch eingebunden.
 - Quelle/Lizenz: International Monetary Fund — Quellenangabe, nicht-kommerzielle Nutzung ([Bedingungen](https://www.imf.org/en/About/Copyright-and-Terms)); keine
   automatisierten Massendownloads, kein LLM-Training.
+
+## Migration (Tab «Migration»)
+
+Sachlich und quellenbasiert; zu jeder Kennzahl Definition, Quelle, Lizenz und Stand (Kasten «Wie lesen?», Hinweise direkt an den Diagrammen).
+- **Anteil an der Bevölkerung** (Länder wählbar: EU27, EFTA, USA/China/Russland; Gruppenwerte EU27, EWR, D-A-CH-L): drei getrennte Kennzahlen —
+  ausländische Staatsangehörige (Eurostat `migr_pop1ctz`, = Total − Staatsangehörige des Berichtslands), im Ausland Geborene (`migr_pop3ctb`) und
+  internationaler Migrantenbestand (UN DESA über Weltbank `SM.POP.TOTL.ZS`, alle Länder, nur alle 5 Jahre). USA/China/Russland haben nur die UN-Reihe,
+  bei Eurostat-Kennzahlen steht «keine Daten». Gruppenwert = Σ Betroffene / Σ Bevölkerung der Länder mit Daten (bevölkerungsgewichtet).
+- **Liechtenstein amtlich** (PXWeb 211.002/211.101/211.006/281.005): Wohnbevölkerung nach Staatsangehörigkeit, Herkunft, Gemeinden, Altersstruktur,
+  Grenzgänger (Beschäftigte mit Wohnland Ausland) getrennt; Diagramm «vier Definitionen» erklärt die Abweichung (Amt 35 % Ausländer vs. rund 70 % im Ausland
+  Geborene/UN-Migrantenbestand).
+- **Wanderung, Einbürgerung, Asyl, Arbeitsmarkt:** LI PX 231.101/232.001/233.201/284.101; Eurostat `migr_acq` (je 100 ausländische Einwohner),
+  `migr_asyappctza` (je 100 000 Einwohner). Eurostat `lfsa_urgacob` und `ilc_li32` (Geburtsland) haben für LI keine Werte und werden nicht gezeigt.
+- **Straffälligkeit:** Eurostat `crim_just_ctz` (Verdächtige/Strafverfolgte/Verurteilte; Inland/Ausland), Raten je Gruppe selbst berechnet (Eurostat selbst
+  bezieht «je 100 000» auf die Gesamtbevölkerung). Mit methodischen Hinweisen (Nichtansässige im Zähler, Alter/Geschlecht, Anzeigeverhalten, Definitionen).
+  Liechtenstein weist Nationalität aus: Landespolizei-Jahresbericht 2021 (S. 22, 34); das Amt für Statistik hat keine Kriminalitätstabelle.
+- **Ausgaben je Migrant:** bewusst keine Zahlen — Eurostat/OECD/Liechtenstein liefern keine belastbare, vergleichbare Statistik (Begründung im Tab).
+- **Datenhaltung:** Worker spiegelt die Quellen höchstens wöchentlich (`migration.all_sources()`, Cache-Schlüssel `es:`, `wb:`, `pxs:` in `px_cache`).
+  Lizenzen: Eurostat © EU CC BY 4.0, Weltbank/UN DESA CC BY 4.0, Amt für Statistik Namensnennung.
+- **Nicht umgesetzt (Quelle fehlt/unzuverlässig):** Rücküberweisungen (Weltbank-Indikator ohne Liechtenstein), Armutsgefährdung nach Geburtsland (ohne Liechtenstein),
+  Bildungsabschlüsse nach Herkunft (LI nur Volkszählung 2020, andere Länder nicht vergleichbar aufbereitet).
 
 ## Lokal starten
 

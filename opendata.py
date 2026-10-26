@@ -111,15 +111,25 @@ def is_time_dim(name: str) -> bool:
     return "alter" not in n and bool(_TIME_RE.search(n))
 
 
-def px_fetch(path: str, max_cells: int = MAX_CELLS) -> tuple[pd.DataFrame, dict]:
+def px_fetch(path: str, max_cells: int = MAX_CELLS, select: dict | None = None) -> tuple[pd.DataFrame, dict]:
     """
     Lädt eine PX-Tabelle als Long-DataFrame (Spalten = Dimensionen + 'Wert', ggf. 'Kennzahl').
     Zu grosse Tabellen werden reduziert: Dimensionen mit den meisten Werten (ausser Zeit) auf
     den ersten Wert (meist «Total»). Rückgabe: (df, info).
+    select: {Variablentext: [Werttexte]} wählt gezielt Werte (z. B. nur «Total»); alle übrigen Variablen bleiben vollständig.
     """
     meta = px_get(path)
     variables = meta["variables"]
     selected = {v["code"]: list(v["values"]) for v in variables}
+    pinned = set()
+    for v in variables:
+        if select and v["text"] in select:
+            wanted = set(select[v["text"]])
+            picked = [c for c, t in zip(v["values"], v["valueTexts"]) if t in wanted]
+            if not picked:
+                raise ValueError(f"PX {path}: Auswahl {sorted(wanted)} nicht in «{v['text']}»")
+            selected[v["code"]] = picked
+            pinned.add(v["code"])
 
     def cells():
         n = 1
@@ -130,7 +140,7 @@ def px_fetch(path: str, max_cells: int = MAX_CELLS) -> tuple[pd.DataFrame, dict]
     reduced = []
     while cells() > max_cells:
         cand = [v for v in variables
-                if len(selected[v["code"]]) > 1 and not is_time_dim(v["text"])]
+                if len(selected[v["code"]]) > 1 and not is_time_dim(v["text"]) and v["code"] not in pinned]
         if not cand:
             cand = [v for v in variables if len(selected[v["code"]]) > 1]
         if not cand:

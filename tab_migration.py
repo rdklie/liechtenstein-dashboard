@@ -1,0 +1,703 @@
+"""
+tab_migration.py — Tab «Migration»
+==================================
+Sachlich und quellenbasiert: amtliche/internationale Quellen (Eurostat, Weltbank/UN DESA, Amt für Statistik
+Liechtenstein, Landespolizei Liechtenstein), jeweils mit Definition, Quelle, Lizenz und Stand.
+Daten kommen aus SQLite (vom Worker höchstens wöchentlich gespiegelt, siehe migration.py).
+
+Bewusst NICHT enthalten: Ausgaben je Migrant (keine belastbare, vergleichbare Statistik — siehe Hinweiskasten)
+und alles, was auf Schätzungen aus dritten Quellen beruhen würde.
+"""
+
+import dash_bootstrap_components as dbc
+import pandas as pd
+import plotly.graph_objects as go
+from dash import Input, Output, callback, ctx, dcc, html, no_update
+
+from db import get_px, read_px_cache
+from migration import (COUNTRY_NAMES, EFTA, EU27, GROUPS, MIG_PX, ES_SPECS, WB_KEY, es_id, pxs_id)
+from ui import FL_BLUE, FL_RED, FL_GOLD, ACCENT, GREEN, MUTED, TEXT, BORDER, MUNI_PALETTE, _card, _kpi, _styled, _empty
+
+LI = "LIE"
+DEFAULT_COUNTRIES = ["LIE", "DEU", "AUT", "CHE"]
+DEFAULT_GROUPS = ["EU27", "DACHL"]
+INDICATORS = [
+    {"label": "Ausländische Staatsangehörige (Eurostat)", "value": "cit"},
+    {"label": "Im Ausland Geborene (Eurostat)", "value": "birth"},
+    {"label": "Internationaler Migrantenbestand (UN DESA/Weltbank)", "value": "stock"},
+]
+IND_TITLE = {"cit": "Anteil ausländischer Staatsangehöriger", "birth": "Anteil im Ausland Geborener",
+             "stock": "Anteil internationaler Migranten (UN DESA)"}
+STAGES = [{"label": "Tatverdächtige", "value": "PER_SUSP"}, {"label": "Strafverfolgte", "value": "PER_PRSC"},
+          {"label": "Verurteilte", "value": "PER_CNV"}]
+STAGE_NAME = {v["value"]: v["label"] for v in STAGES}
+DEFAULT_YEAR = 2024
+COUNTRY_OPTS = [{"label": COUNTRY_NAMES[c], "value": c} for c in
+                sorted(COUNTRY_NAMES, key=lambda c: (c not in ("LIE", "DEU", "AUT", "CHE"), COUNTRY_NAMES[c]))]
+
+ES_LICENSE = "Eurostat, © Europäische Union, CC BY 4.0"
+WB_LICENSE = "Weltbank WDI / UN DESA, CC BY 4.0"
+LI_LICENSE = "Amt für Statistik Liechtenstein, opendata.li, Namensnennung (CC BY)"
+URL = {
+    "es": "https://ec.europa.eu/eurostat/databrowser/view/{}/default/table",
+    "wb": "https://data.worldbank.org/indicator/SM.POP.TOTL.ZS",
+    "li": "https://www.opendata.li/de/daten",
+    "lp": "https://www.landespolizei.li/",
+}
+
+
+# ── Sidebar ───────────────────────────────────────────────────────────────────
+
+def sidebar_section() -> html.Div:
+    btn = {"width": "auto", "padding": "3px 10px", "fontSize": "0.72rem", "marginRight": "4px", "marginBottom": "4px"}
+    return html.Div(id="filter-migration", children=[
+        html.Div([
+            html.Label("Kennzahl (Anteil)", className="filter-label"),
+            dcc.RadioItems(id="mig-ind", options=INDICATORS, value="cit", className="fl-checklist",
+                           labelClassName="checklist-label"),
+        ], className="filter-section"),
+        html.Div([
+            html.Label("Länder", className="filter-label"),
+            dcc.Dropdown(id="mig-countries", options=COUNTRY_OPTS, value=DEFAULT_COUNTRIES, multi=True, clearable=False,
+                         placeholder="Land hinzufügen…", className="fl-dropdown"),
+            html.Div([
+                html.Button("EU27", id="mig-btn-eu", className="copy-btn", style=btn),
+                html.Button("EWR", id="mig-btn-ewr", className="copy-btn", style=btn),
+                html.Button("D-A-CH-L", id="mig-btn-dachl", className="copy-btn", style=btn),
+                html.Button("+ USA, China, Russland", id="mig-btn-world", className="copy-btn", style=btn),
+                html.Button("Zurücksetzen", id="mig-btn-reset", className="copy-btn", style=btn),
+            ], style={"marginTop": "6px"}),
+        ], className="filter-section"),
+        html.Div([
+            html.Label("Gruppenwerte anzeigen", className="filter-label"),
+            dcc.Checklist(id="mig-groups", options=[{"label": v[0], "value": k} for k, v in GROUPS.items()],
+                          value=DEFAULT_GROUPS, className="fl-checklist", labelClassName="checklist-label"),
+            html.Small("Gruppenwert = Summe der Betroffenen / Summe der Bevölkerung der Mitgliedsländer mit Daten "
+                       "(nach Bevölkerung gewichtet).", style={"color": MUTED, "fontSize": "0.7rem"}),
+        ], className="filter-section"),
+        html.Div([
+            html.Label("Jahr (Ländervergleich)", className="filter-label"),
+            dcc.Slider(id="mig-year", min=1990, max=2025, step=1, value=DEFAULT_YEAR,
+                       marks={y: {"label": str(y), "style": {"color": MUTED, "fontSize": "10px"}} for y in range(1990, 2026, 5)},
+                       tooltip={"placement": "bottom", "always_visible": True}, className="fl-slider"),
+        ], className="filter-section"),
+        html.Div([
+            html.Label("Straffälligkeit: Stufe", className="filter-label"),
+            dcc.RadioItems(id="mig-stage", options=STAGES, value="PER_SUSP", className="fl-checklist",
+                           labelClassName="checklist-label"),
+        ], className="filter-section"),
+    ])
+
+
+@callback(Output("mig-countries", "value"),
+          Input("mig-btn-eu", "n_clicks"), Input("mig-btn-ewr", "n_clicks"), Input("mig-btn-dachl", "n_clicks"),
+          Input("mig-btn-world", "n_clicks"), Input("mig-btn-reset", "n_clicks"), prevent_initial_call=True)
+def _shortcut(*_):
+    t = ctx.triggered_id
+    if t == "mig-btn-eu":
+        return ["LIE"] + GROUPS["EU27"][1]
+    if t == "mig-btn-ewr":
+        return GROUPS["EWR"][1] + ["CHE"]
+    if t == "mig-btn-dachl":
+        return GROUPS["DACHL"][1]
+    if t == "mig-btn-world":
+        return DEFAULT_COUNTRIES + ["USA", "CHN", "RUS"]
+    if t == "mig-btn-reset":
+        return DEFAULT_COUNTRIES
+    return no_update
+
+
+# ── Daten ─────────────────────────────────────────────────────────────────────
+
+def _g(key: str) -> pd.DataFrame:
+    return get_px(key, max_age_hours=None)[0]
+
+
+def _stand(*keys: str):
+    ts = [c[2] for c in (read_px_cache(k) for k in keys) if c]
+    return min(ts) if ts else None
+
+
+def _clean(label: str) -> str:
+    return str(label).lstrip("-. ").strip()
+
+
+def share_table(ind: str) -> pd.DataFrame:
+    """Alle Länder: iso3, year, share (%), numer, denom, name — je nach Kennzahl."""
+    if ind in ("cit", "birth"):
+        key, dim, nat = ("es:pop_cit", "citizen", "NAT") if ind == "cit" else ("es:pop_birth", "c_birth", "NAT")
+        d = _g(key)
+        if d.empty:
+            return d
+        d = d[d["iso3"].notna()]
+        p = d.pivot_table(index=["iso3", "time"], columns=dim, values="Wert").reset_index()
+        denom = p["TOTAL"]
+        numer = (p["TOTAL"] - p[nat]) if ind == "cit" else p["FOR"]
+        out = pd.DataFrame({"iso3": p["iso3"], "year": p["time"].astype(int), "numer": numer, "denom": denom})
+    else:
+        w = _g(WB_KEY)
+        if w.empty:
+            return w
+        p = w.pivot_table(index=["iso3", "year"], columns="indicator", values="Wert").reset_index()
+        pp = w[w["indicator"] == "SP.POP.TOTL"][["iso3", "year", "Wert"]].rename(columns={"Wert": "pop"})
+        p = p.merge(pp, on=["iso3", "year"], how="left")
+        out = pd.DataFrame({"iso3": p["iso3"], "year": p["year"].astype(int), "numer": p["SM.POP.TOTL"], "denom": p["pop"],
+                            "share_wb": p["SM.POP.TOTL.ZS"]})
+    out = out.dropna(subset=["numer", "denom"])
+    out["share"] = out["numer"] / out["denom"] * 100
+    if ind == "stock":
+        out["share"] = out["share"].where(out["share"].notna(), out.get("share_wb"))
+    out["name"] = out["iso3"].map(lambda c: COUNTRY_NAMES.get(c, c))
+    return out
+
+
+def group_series(df: pd.DataFrame, members: list[str], min_members: int = 3) -> pd.DataFrame:
+    """Gruppenwert je Jahr: Σ Betroffene / Σ Bevölkerung der Länder mit Daten; n = Anzahl Länder."""
+    sub = df[df["iso3"].isin(members)]
+    g = sub.groupby("year").agg(numer=("numer", "sum"), denom=("denom", "sum"), n=("iso3", "nunique")).reset_index()
+    g = g[g["n"] >= min(min_members, len(members))]
+    g["share"] = g["numer"] / g["denom"] * 100
+    return g
+
+
+def _name(c: str) -> str:
+    return COUNTRY_NAMES.get(c, c)
+
+
+LI_COLOR = "#F0F6FC"                      # Liechtenstein hell hervorgehoben (dunkles Blau ist auf dem dunklen Grund schlecht lesbar)
+_PALETTE = [FL_RED, FL_GOLD, ACCENT, GREEN, "#BB8FCE", "#F0883E", "#58D68D", "#79C0FF", "#D2A679", "#F85149", "#FBD460"]
+GROUP_STYLE = {"EU27": ("#8B949E", "dot"), "EWR": ("#B1BAC4", "dash"), "DACHL": ("#F0883E", "dot")}
+
+
+def _col(i: int, c: str) -> str:
+    return LI_COLOR if c == LI else _PALETTE[i % len(_PALETTE)]
+
+
+def _graph(fig: go.Figure, height: int = 340):
+    fig.update_layout(height=height)
+    return dcc.Graph(figure=fig, config={"displayModeBar": False})
+
+
+def _note(text, icon="fa-circle-info", color=ACCENT):
+    return html.Div([html.I(className=f"fas {icon}", style={"marginRight": "8px", "color": color}), text],
+                    style={"color": MUTED, "fontSize": "0.78rem", "padding": "2px 2px 8px"})
+
+
+def _source(*parts) -> html.Div:
+    """parts: (Text, URL|None) — Quelle · Lizenz · Stand."""
+    items = [html.I(className="fas fa-database", style={"marginRight": "6px", "color": MUTED}),
+             html.Span("Quelle: ", style={"color": MUTED})]
+    for i, (text, url) in enumerate(parts):
+        if i:
+            items.append(html.Span(" · ", style={"color": BORDER}))
+        items.append(html.A(text, href=url, target="_blank", rel="noopener noreferrer", className="source-link") if url
+                     else html.Span(text, style={"color": MUTED}))
+    return html.Div(items, className="source-bar")
+
+
+def _section(title: str, intro: str | None = None):
+    return html.Div([html.H5(title, className="section-title", style={"marginTop": "18px"}),
+                     html.P(intro, style={"color": MUTED, "fontSize": "0.82rem"}) if intro else None])
+
+
+# ── Hinweiskasten ─────────────────────────────────────────────────────────────
+
+def how_to_read() -> html.Div:
+    def item(title, text):
+        return html.Li([html.B(title + ": ", style={"color": TEXT}), text], style={"marginBottom": "4px"})
+    return _card([
+        html.H6([html.I(className="fas fa-book-open", style={"marginRight": "8px", "color": ACCENT}), "Wie lesen? Begriffe und Grenzen"],
+                style={"color": TEXT}),
+        html.Ul([
+            item("Ausländische Staatsangehörige", "Personen ohne die Staatsbürgerschaft des Wohnlands (Eurostat: Total minus Staatsangehörige des "
+                 "Berichtslands, inkl. Staatenlose). Wer eingebürgert wird, zählt danach nicht mehr dazu — Länder mit leichter Einbürgerung "
+                 "haben deshalb niedrigere Anteile."),
+            item("Im Ausland Geborene", "Personen, deren Geburtsland nicht das Wohnland ist, unabhängig von der heutigen Staatsbürgerschaft "
+                 "(Eurostat migr_pop3ctb). Umfasst Eingebürgerte, aber auch z. B. Kinder von Auslandsaufenthalten."),
+            item("Internationaler Migrantenbestand", "UN DESA, für alle Länder vergleichbar (Weltbank SM.POP.TOTL.ZS): im Ausland Geborene "
+                 "inkl. Flüchtlinge, Mitte des Jahres, nur alle 5 Jahre (zuletzt 2024); teils aus Volkszählungen, teils modelliert."),
+            item("Ausländer ≠ Migrant", "Keine der Kennzahlen misst «Migrationshintergrund» oder Zuwanderung insgesamt; die drei Zahlen "
+                 "unterscheiden sich systematisch (siehe Abweichungs-Diagramm für Liechtenstein)."),
+            item("Liechtenstein", "Kleine Bevölkerung (rund 41 000) mit hohem Anteil Nichtansässiger in der Arbeitswelt: Grenzgänger wohnen "
+                 "im Ausland und sind NICHT in der Wohnbevölkerung enthalten; sie werden separat ausgewiesen."),
+            item("Gruppenwerte", "Σ Betroffene / Σ Gesamtbevölkerung der Mitgliedsländer mit Daten im jeweiligen Jahr (nach Bevölkerung gewichtet, "
+                 "kein einfacher Länder-Mittelwert). Fehlende Länder verändern den Wert; die Zahl der berücksichtigten Länder steht im Tooltip."),
+            item("Kein Rückschluss auf Einzelne", "Alle Zahlen sind Gruppenstatistiken. Sie sagen nichts über einzelne Personen aus."),
+        ], style={"color": MUTED, "fontSize": "0.8rem", "paddingLeft": "18px", "marginBottom": "0"}),
+    ])
+
+
+# ── Abschnitt A: Anteil ───────────────────────────────────────────────────────
+
+def section_share(ind: str, countries: list[str], groups: list[str], year: int):
+    df = share_table(ind)
+    if df.empty:
+        return [_empty("Keine Daten in der Datenbank — der wöchentliche Abruf füllt sie.")]
+    out = []
+    have = set(df["iso3"])
+    missing = [c for c in countries if c not in have]
+    fig = go.Figure()
+    for i, c in enumerate(countries):
+        d = df[df["iso3"] == c].sort_values("year")
+        if d.empty:
+            continue
+        fig.add_trace(go.Scatter(x=d["year"], y=d["share"], mode="lines+markers", name=_name(c),
+                                 line=dict(color=_col(i, c), width=3 if c == LI else 2),
+                                 hovertemplate=f"<b>{_name(c)}</b> %{{x}}: %{{y:.1f}} %<extra></extra>"))
+    for gkey in groups:
+        label, members = GROUPS[gkey]
+        g = group_series(df, members)
+        if g.empty:
+            continue
+        fig.add_trace(go.Scatter(x=g["year"], y=g["share"], mode="lines", name=label.split(" (")[0] + " (Gruppe)",
+                                 line=dict(dash=GROUP_STYLE[gkey][1], width=2.2, color=GROUP_STYLE[gkey][0]), customdata=g["n"],
+                                 hovertemplate=f"<b>{label}</b> %{{x}}: %{{y:.1f}} %<br>%{{customdata}} Länder mit Daten<extra></extra>"))
+    _styled(fig, f"{IND_TITLE[ind]} (% der Bevölkerung)")
+    fig.update_yaxes(ticksuffix=" %")
+    fig.update_xaxes(tickformat="d")
+    out.append(_card(_graph(fig, 380)) if fig.data else _empty("Für die gewählten Länder gibt es bei dieser Kennzahl keine Daten."))
+    if missing:
+        out.append(_note("Keine Daten für: " + ", ".join(_name(c) for c in missing) + ". "
+                         + ("Eurostat führt nur EU- und EFTA-Länder; für USA, China und Russland gibt es den internationalen "
+                            "Migrantenbestand (UN DESA/Weltbank)." if ind != "stock" else ""), "fa-triangle-exclamation", FL_GOLD))
+
+    # Ländervergleich Balken
+    years = sorted(df["year"].unique())
+    use = max([y for y in years if y <= year] or [years[0]])
+    d = df[df["year"] == use].copy()
+    if ind == "stock":
+        pool = set(COUNTRY_NAMES)                         # Balken nur für die wählbaren Länder (übersichtlich)
+        d = d[d["iso3"].isin(pool | set(countries))]
+    elif ind in ("cit", "birth"):
+        d = d[d["iso3"].isin(COUNTRY_NAMES)]
+    d = d.sort_values("share")
+    bars = go.Figure(go.Bar(
+        x=d["share"], y=d["name"], orientation="h",
+        marker_color=[FL_RED if c == LI else (ACCENT if c in countries else FL_BLUE) for c in d["iso3"]],
+        customdata=list(zip(d["numer"], d["denom"])),
+        hovertemplate="<b>%{y}</b>: %{x:.1f} %<br>%{customdata[0]:,.0f} von %{customdata[1]:,.0f}<extra></extra>"))
+    _styled(bars, f"Ländervergleich {use} (Liechtenstein rot, Auswahl hellblau)", legend=False)
+    bars.update_layout(hovermode="closest", height=max(340, 17 * len(d) + 80), margin=dict(l=110, r=20, t=50, b=40))
+    bars.update_xaxes(ticksuffix=" %")
+    out.append(_card(_graph(bars, max(340, 17 * len(d) + 80))))
+    if use != year:
+        out.append(_note(f"Für {year} liegen keine Werte vor; gezeigt wird das letzte verfügbare Jahr {use}."))
+    src = {"cit": [("Eurostat migr_pop1ctz", URL["es"].format("migr_pop1ctz")), (ES_LICENSE, None)],
+           "birth": [("Eurostat migr_pop3ctb", URL["es"].format("migr_pop3ctb")), (ES_LICENSE, None)],
+           "stock": [("UN DESA International Migrant Stock via Weltbank SM.POP.TOTL.ZS", URL["wb"]), (WB_LICENSE, None)]}[ind]
+    st = _stand(es_id("pop_cit") if ind == "cit" else es_id("pop_birth") if ind == "birth" else WB_KEY)
+    out.append(_source(*src, (f"Stand der Daten: {st:%d.%m.%Y}" if st else "Stand unbekannt", None)))
+    return out
+
+
+# ── Abschnitt: Liechtenstein amtlich ──────────────────────────────────────────
+
+def section_li():
+    out = []
+    pop = _g(pxs_id("li_pop_ctz"))
+    if pop.empty:
+        return [_empty("Keine Daten des Amts für Statistik in der Datenbank.")]
+    pop = pop.assign(lab=pop["Staatsbürgerschaft"].map(_clean), Jahr=pop["Jahr"].astype(int))
+    tot = pop[pop["lab"] == "Staatsbürgerschaft - Total"].set_index("Jahr")["Wert"]
+    lie = pop[pop["lab"] == "Liechtenstein"].set_index("Jahr")["Wert"]
+    nonperm = _g(pxs_id("li_nonperm"))
+    npm = nonperm.assign(Jahr=nonperm["Jahr"].astype(int)).set_index("Jahr")["Wert"] if not nonperm.empty else pd.Series(dtype=float)
+    years = sorted(tot.index)
+    ausl = tot - lie
+
+    kpis = []
+    y = years[-1]
+    kpis.append(dbc.Col(_kpi("fa-users", f"Ständige Wohnbevölkerung ({y})", f"{tot[y]:,.0f}".replace(",", "’"), FL_BLUE,
+                             "31. Dezember, Amt für Statistik"), md=3, sm=6, className="mb-3"))
+    kpis.append(dbc.Col(_kpi("fa-passport", f"Ausländische Staatsangehörige ({y})", f"{ausl[y] / tot[y] * 100:.1f} %".replace(".", ","),
+                             FL_RED, f"{ausl[y]:,.0f} Personen".replace(",", "’")), md=3, sm=6, className="mb-3"))
+    comm = _g(pxs_id("li_commuters"))
+    cm = None
+    if not comm.empty:
+        c = comm[comm["Wohnland"].map(_clean) == "Ausland"]
+        c = c[c["Wohnland"] == c["Wohnland"].iloc[0]] if not c.empty else c
+        if not c.empty:
+            cm = c.assign(Jahr=c["Jahr"].astype(int)).set_index("Jahr")["Wert"].dropna()
+            yy = cm.index.max()
+            kpis.append(dbc.Col(_kpi("fa-van-shuttle", f"Grenzgänger/Zupendler ({yy})", f"{cm[yy]:,.0f}".replace(",", "’"), GREEN,
+                                     "Beschäftigte mit Wohnort im Ausland — nicht in der Wohnbevölkerung"), md=3, sm=6, className="mb-3"))
+    if len(npm):
+        yn = npm.index.max()
+        kpis.append(dbc.Col(_kpi("fa-suitcase-rolling", f"Nichtständige Bevölkerung ({yn})", f"{npm[yn]:,.0f}".replace(",", "’"), FL_GOLD,
+                                 "z. B. Kurzaufenthalter, Schutzsuchende"), md=3, sm=6, className="mb-3"))
+    out.append(dbc.Row(kpis, className="g-3"))
+
+    # (a) Bevölkerung nach Staatsangehörigkeit
+    f1 = go.Figure()
+    f1.add_trace(go.Bar(x=years, y=[lie[y] for y in years], name="Liechtensteiner", marker_color=FL_BLUE,
+                        hovertemplate="%{x}: %{y:,.0f} Liechtensteiner<extra></extra>"))
+    f1.add_trace(go.Bar(x=years, y=[ausl[y] for y in years], name="Ausländische Staatsangehörige", marker_color=FL_RED,
+                        hovertemplate="%{x}: %{y:,.0f} Ausländer<extra></extra>"))
+    _styled(f1, "Ständige Wohnbevölkerung nach Staatsangehörigkeit")
+    f1.update_layout(barmode="stack")
+    f1.update_xaxes(tickformat="d")
+    f2 = go.Figure()
+    f2.add_trace(go.Scatter(x=years, y=[ausl[y] / tot[y] * 100 for y in years], mode="lines+markers", name="Anteil Ausländer",
+                            line=dict(color=FL_RED, width=2.8),
+                            hovertemplate="%{x}: %{y:.1f} %<extra></extra>"))
+    _styled(f2, "Ausländeranteil an der ständigen Wohnbevölkerung (%)", legend=False)
+    f2.update_yaxes(ticksuffix=" %")
+    f2.update_xaxes(tickformat="d")
+    out.append(dbc.Row([dbc.Col(_card(_graph(f1)), md=6, className="mb-3"), dbc.Col(_card(_graph(f2)), md=6, className="mb-3")], className="g-3"))
+
+    # (b) Abweichung der Definitionen
+    f3 = go.Figure()
+    f3.add_trace(go.Scatter(x=years, y=[ausl[y] / tot[y] * 100 for y in years], mode="lines+markers", name="Amt für Statistik: Staatsangehörigkeit (31.12.)",
+                            line=dict(color=FL_RED, width=2.5)))
+    for ind, name, col, dash in (("cit", "Eurostat: Staatsangehörigkeit (1.1.)", FL_GOLD, "dot"), ("birth", "Eurostat: im Ausland geboren (1.1.)", ACCENT, "solid"),
+                                 ("stock", "UN DESA: internationaler Migrantenbestand (Jahresmitte)", GREEN, "dot")):
+        d = share_table(ind)
+        d = d[d["iso3"] == LI].sort_values("year") if not d.empty else d
+        if not d.empty:
+            f3.add_trace(go.Scatter(x=d["year"], y=d["share"], mode="lines+markers", name=name, line=dict(color=col, dash=dash, width=2)))
+    _styled(f3, "Liechtenstein: dieselbe Bevölkerung, vier Definitionen (%)")
+    f3.update_yaxes(ticksuffix=" %")
+    f3.update_xaxes(tickformat="d", range=[1999, years[-1] + 1])
+    out.append(_card(_graph(f3, 380)))
+    out.append(_note("Warum die Linien auseinanderliegen: «Ausländer» zählt nur aktuelle Staatsbürgerschaften; «im Ausland geboren» "
+                     "enthält Eingebürgerte; die UN-Reihe hat andere Stichtage und Modellierungen. Eurostat zählt zum 1. Januar, das Amt "
+                     "zum 31. Dezember des Vorjahres (Abweichung durch Stichtag und Fortschreibung)."))
+
+    # (c) Herkunft, Gemeinden
+    last = pop[(pop["Jahr"] == y) & pop["Staatsbürgerschaft"].str.startswith("...")]
+    last = last[last["lab"] != "Liechtenstein"].dropna(subset=["Wert"]).sort_values("Wert", ascending=False).head(12).sort_values("Wert")
+    f4 = go.Figure(go.Bar(x=last["Wert"], y=last["lab"], orientation="h", marker_color=FL_BLUE,
+                          hovertemplate="<b>%{y}</b>: %{x:,.0f}<extra></extra>"))
+    _styled(f4, f"Häufigste Staatsangehörigkeiten der Wohnbevölkerung {y}", legend=False)
+    f4.update_layout(hovermode="closest", margin=dict(l=130, r=20, t=50, b=40))
+    gem = _g(pxs_id("li_pop_ctz_gem"))
+    f5 = _empty("Keine Gemeindedaten.")
+    if not gem.empty:
+        gem = gem.assign(lab=gem["Staatsbürgerschaft"].map(_clean), Jahr=gem["Jahr"].astype(int))
+        gg = gem[(gem["Jahr"] == y) & (gem["Wohngemeinde"] != "Liechtenstein")]
+        pv = gg.pivot_table(index="Wohngemeinde", columns="lab", values="Wert")
+        if "Liechtenstein" in pv.columns and "Staatsbürgerschaft - Total" in pv.columns:
+            pv["share"] = (1 - pv["Liechtenstein"] / pv["Staatsbürgerschaft - Total"]) * 100
+            pv = pv.sort_values("share")
+            f5 = go.Figure(go.Bar(x=pv["share"], y=pv.index, orientation="h", marker_color=FL_RED,
+                                  hovertemplate="<b>%{y}</b>: %{x:.1f} %<extra></extra>"))
+            _styled(f5, f"Ausländeranteil je Gemeinde {y} (%)", legend=False)
+            f5.update_layout(hovermode="closest", margin=dict(l=110, r=20, t=50, b=40))
+            f5.update_xaxes(ticksuffix=" %")
+            f5 = _card(_graph(f5))
+    out.append(dbc.Row([dbc.Col(_card(_graph(f4)), md=6, className="mb-3"), dbc.Col(f5, md=6, className="mb-3")], className="g-3"))
+
+    # (d) Grenzgänger
+    if cm is not None and not comm.empty:
+        c_all = comm.assign(Jahr=comm["Jahr"].astype(int), lab=comm["Wohnland"].map(_clean))
+        f6 = go.Figure()
+        for lab, col in (("Liechtenstein", FL_BLUE), ("Ausland", FL_RED)):
+            d = c_all[(c_all["lab"] == lab) & (~c_all["Wohnland"].str.startswith("-"))].dropna(subset=["Wert"]).sort_values("Jahr")
+            if not d.empty:
+                f6.add_trace(go.Bar(x=d["Jahr"], y=d["Wert"], name=f"Wohnort {lab}", marker_color=col,
+                                    hovertemplate=f"%{{x}}: %{{y:,.0f}} Beschäftigte, Wohnort {lab}<extra></extra>"))
+        _styled(f6, "Beschäftigte in Liechtenstein nach Wohnland (Grenzgänger separat)")
+        f6.update_layout(barmode="stack")
+        f6.update_xaxes(tickformat="d")
+        out.append(_card(_graph(f6)))
+        out.append(_note("Grenzgänger/Zupendler arbeiten in Liechtenstein, wohnen aber im Ausland (v. a. Schweiz, Österreich, Deutschland). "
+                         "Sie sind weder in der Wohnbevölkerung noch in den Ausländeranteilen oben enthalten."))
+    # (e) Altersstruktur
+    age = _g(pxs_id("li_age"))
+    if not age.empty:
+        a = age.assign(Jahr=age["Jahr"].astype(int))
+        a = a[(a["Jahr"] == y) & (a["Altersjahr"] != "Altersjahr - Total")]
+        a["age"] = pd.to_numeric(a["Altersjahr"], errors="coerce")
+        a = a.dropna(subset=["age"])
+        bands = [(0, 14, "0–14"), (15, 39, "15–39"), (40, 64, "40–64"), (65, 200, "65+")]
+        rows = []
+        for lo, hi, lab in bands:
+            b = a[(a["age"] >= lo) & (a["age"] <= hi)]
+            tot_b = b[b["Staatsbürgerschaft"] == "Staatsbürgerschaft - Total"]["Wert"].sum()
+            lie_b = b[b["Staatsbürgerschaft"] == "Liechtenstein"]["Wert"].sum()
+            rows.append((lab, tot_b, lie_b, tot_b - lie_b))
+        if rows and sum(r[1] for r in rows):
+            T, L_, A_ = sum(r[1] for r in rows), sum(r[2] for r in rows), sum(r[3] for r in rows)
+            f7 = go.Figure()
+            f7.add_trace(go.Bar(x=[r[0] for r in rows], y=[r[2] / L_ * 100 for r in rows], name="Liechtensteiner", marker_color=FL_BLUE))
+            f7.add_trace(go.Bar(x=[r[0] for r in rows], y=[r[3] / A_ * 100 for r in rows], name="Ausländische Staatsangehörige", marker_color=FL_RED))
+            _styled(f7, f"Altersstruktur nach Staatsangehörigkeit {y} (% der jeweiligen Gruppe)")
+            f7.update_layout(barmode="group")
+            f7.update_yaxes(ticksuffix=" %")
+            f8 = go.Figure(go.Bar(x=[r[0] for r in rows], y=[r[3] / r[1] * 100 for r in rows], marker_color=FL_RED,
+                                  hovertemplate="%{x}: %{y:.1f} % Ausländer<extra></extra>"))
+            _styled(f8, f"Ausländeranteil nach Altersgruppe {y} (%)", legend=False)
+            f8.update_yaxes(ticksuffix=" %")
+            out.append(dbc.Row([dbc.Col(_card(_graph(f7)), md=6, className="mb-3"), dbc.Col(_card(_graph(f8)), md=6, className="mb-3")], className="g-3"))
+            out.append(_note("Die Altersstruktur unterscheidet sich zwischen den Gruppen (Zugewanderte sind häufiger im Erwerbsalter). "
+                             "Das beeinflusst jeden Vergleich von Raten (z. B. Straffälligkeit, Arbeitslosigkeit)."))
+    st = _stand(pxs_id("li_pop_ctz"), pxs_id("li_commuters"))
+    out.append(_source(("Amt für Statistik Liechtenstein: 211.002, 211.101, 211.006, 281.005 (opendata.li)", URL["li"]), (LI_LICENSE, None),
+                       (f"Stand der Daten: {st:%d.%m.%Y}" if st else "Stand unbekannt", None)))
+    return out
+
+
+# ── Abschnitt: Wanderung, Einbürgerung, Asyl, Arbeitslosigkeit ───────────────
+
+def _pop_total() -> pd.DataFrame:
+    d = _g(es_id("pop_cit"))
+    if d.empty:
+        return d
+    t = d[d["citizen"] == "TOTAL"]
+    return t[["iso3", "time", "Wert"]].rename(columns={"Wert": "pop", "time": "year"}).assign(year=lambda x: x["year"].astype(int))
+
+
+def _foreign_pop() -> pd.DataFrame:
+    d = _g(es_id("pop_cit"))
+    if d.empty:
+        return d
+    p = d.pivot_table(index=["iso3", "time"], columns="citizen", values="Wert").reset_index()
+    p["foreign"] = p["TOTAL"] - p["NAT"]
+    return p[["iso3", "time", "foreign", "NAT", "TOTAL"]].assign(year=lambda x: x["time"].astype(int))
+
+
+def section_flows(countries: list[str]):
+    out = []
+    # LI Wanderung + Einbürgerungen
+    mig = _g(pxs_id("li_migration"))
+    nat = _g(pxs_id("li_naturalisation"))
+    f1 = f2 = _empty("Keine Daten.")
+    if not mig.empty:
+        m = mig.assign(Jahr=mig["Jahr"].astype(int)).pivot_table(index="Jahr", columns="Richtung", values="Wert")
+        if {"Einwanderung", "Auswanderung"} <= set(m.columns):
+            f = go.Figure()
+            f.add_trace(go.Bar(x=m.index, y=m["Einwanderung"], name="Einwanderung", marker_color=FL_BLUE))
+            f.add_trace(go.Bar(x=m.index, y=-m["Auswanderung"], name="Auswanderung", marker_color=FL_RED,
+                               customdata=m["Auswanderung"], hovertemplate="%{x}: %{customdata:,.0f} Auswanderung<extra></extra>"))
+            f.add_trace(go.Scatter(x=m.index, y=m["Einwanderung"] - m["Auswanderung"], mode="lines+markers", name="Wanderungssaldo",
+                                   line=dict(color=FL_GOLD, width=2.5)))
+            _styled(f, "Liechtenstein: Zu- und Wegzüge (Personen)")
+            f.update_layout(barmode="relative")
+            f.update_xaxes(tickformat="d")
+            f1 = _card(_graph(f))
+    if not nat.empty:
+        n = nat.assign(Jahr=nat["Jahr"].astype(int))
+        n = n[n["Einbürgerungsart"].map(_clean) == "Einbürgerung - Total"].dropna(subset=["Wert"]).sort_values("Jahr")
+        n = n[n["Jahr"] >= 1990]
+        if not n.empty:
+            f = go.Figure(go.Bar(x=n["Jahr"], y=n["Wert"], marker_color=GREEN, hovertemplate="%{x}: %{y:,.0f} Einbürgerungen<extra></extra>"))
+            _styled(f, "Liechtenstein: Einbürgerungen (Personen)", legend=False)
+            f.update_xaxes(tickformat="d")
+            f2 = _card(_graph(f))
+    out.append(dbc.Row([dbc.Col(f1, md=6, className="mb-3"), dbc.Col(f2, md=6, className="mb-3")], className="g-3"))
+    out.append(_source(("Amt für Statistik Liechtenstein: 231.101, 232.001", URL["li"]), (LI_LICENSE, None)))
+
+    # Eurostat: Einbürgerungen je 100 Ausländer, Asyl je 100 000
+    fp = _foreign_pop()
+    acq = _g(es_id("acq"))
+    asy = _g(es_id("asylum"))
+    pt = _pop_total()
+    ca = go.Figure()
+    cb = go.Figure()
+    for i, c in enumerate(countries):
+        col = _col(i, c)
+        if not acq.empty and not fp.empty:
+            a = acq[acq["iso3"] == c].assign(year=lambda x: x["time"].astype(int)).merge(fp[fp["iso3"] == c][["year", "foreign"]], on="year")
+            if not a.empty:
+                a = a.sort_values("year")
+                ca.add_trace(go.Scatter(x=a["year"], y=a["Wert"] / a["foreign"] * 100, mode="lines+markers", name=_name(c),
+                                        line=dict(color=col, width=2.8 if c == LI else 2),
+                                        hovertemplate=f"<b>{_name(c)}</b> %{{x}}: %{{y:.2f}} %<extra></extra>"))
+        if not asy.empty and not pt.empty:
+            s = asy[asy["iso3"] == c].assign(year=lambda x: x["time"].astype(int)).merge(pt[pt["iso3"] == c][["year", "pop"]], on="year")
+            if not s.empty:
+                s = s.sort_values("year")
+                cb.add_trace(go.Scatter(x=s["year"], y=s["Wert"] / s["pop"] * 1e5, mode="lines+markers", name=_name(c),
+                                        line=dict(color=col, width=2.8 if c == LI else 2),
+                                        hovertemplate=f"<b>{_name(c)}</b> %{{x}}: %{{y:,.0f}} je 100 000<extra></extra>"))
+    _styled(ca, "Einbürgerungen je 100 ausländische Einwohner (%)")
+    ca.update_yaxes(ticksuffix=" %")
+    ca.update_xaxes(tickformat="d")
+    _styled(cb, "Asylanträge je 100 000 Einwohner")
+    cb.update_xaxes(tickformat="d")
+    out.append(dbc.Row([dbc.Col(_card(_graph(ca)) if ca.data else _empty("Keine Daten."), md=6, className="mb-3"),
+                        dbc.Col(_card(_graph(cb)) if cb.data else _empty("Keine Daten."), md=6, className="mb-3")], className="g-3"))
+    out.append(_note("Einbürgerungsrate = Einbürgerungen eines Jahres / ausländische Wohnbevölkerung (1.1.); sie hängt von den "
+                     "Voraussetzungen des Landes ab (Aufenthaltsdauer, Doppelbürgerschaft). Asylanträge: Erst- und Folgeanträge "
+                     "je Jahr (Eurostat migr_asyappctza), Werte kleiner Länder schwanken stark."))
+    st = _stand(es_id("acq"), es_id("asylum"), es_id("pop_cit"))
+    out.append(_source(("Eurostat migr_acq, migr_asyappctza, migr_pop1ctz", URL["es"].format("migr_acq")), (ES_LICENSE, None),
+                       (f"Stand der Daten: {st:%d.%m.%Y}" if st else "Stand unbekannt", None)))
+
+    # Asyl LI + Arbeitslosigkeit nach Heimat
+    asl = _g(pxs_id("li_asylum"))
+    un = _g(pxs_id("li_unemp"))
+    g1 = g2 = _empty("Keine Daten.")
+    if not asl.empty:
+        a = asl.assign(Jahr=asl["Jahr"].astype(int)).dropna(subset=["Wert"])
+        f = go.Figure()
+        for typ, col in (("Asylgesuche", FL_BLUE), ("Schutzgesuche", FL_GOLD)):
+            d = a[a["Bewilligungstyp"] == typ].sort_values("Jahr")
+            if not d.empty:
+                f.add_trace(go.Bar(x=d["Jahr"], y=d["Wert"], name=typ, marker_color=col))
+        if f.data:
+            _styled(f, "Liechtenstein: Asyl- und Schutzgesuche (Personen)")
+            f.update_layout(barmode="stack")
+            f.update_xaxes(tickformat="d")
+            g1 = _card(_graph(f))
+    if not un.empty:
+        u = un.assign(Jahr=un["Jahr"].astype(int))
+        f = go.Figure()
+        for heimat, col in (("Liechtensteiner", FL_BLUE), ("Ausländer", FL_RED), ("Heimat - Total", MUTED)):
+            d = u[u["Heimat"] == heimat].dropna(subset=["Wert"]).sort_values("Jahr")
+            if not d.empty:
+                f.add_trace(go.Scatter(x=d["Jahr"], y=d["Wert"], mode="lines+markers", name=heimat.replace("Heimat - ", ""),
+                                       line=dict(color=col, width=2.2)))
+        if f.data:
+            _styled(f, "Liechtenstein: Arbeitslosenquote nach Heimat (Jahresdurchschnitt, %)")
+            f.update_yaxes(ticksuffix=" %")
+            f.update_xaxes(tickformat="d")
+            g2 = _card(_graph(f))
+    out.append(dbc.Row([dbc.Col(g1, md=6, className="mb-3"), dbc.Col(g2, md=6, className="mb-3")], className="g-3"))
+    out.append(_note("Arbeitslosenquote nach Heimat: registrierte Arbeitslose (Amt für Statistik) im Verhältnis zu den Beschäftigten; "
+                     "Altersstruktur und Branchen unterscheiden sich zwischen den Gruppen. Eurostat-Reihen nach Geburtsland "
+                     "(lfsa_urgacob) und Armutsgefährdung nach Geburtsland (ilc_li32) enthalten für Liechtenstein keine Werte "
+                     "und werden deshalb nicht gezeigt.", "fa-triangle-exclamation", FL_GOLD))
+    out.append(_source(("Amt für Statistik Liechtenstein: 233.201, 284.101", URL["li"]), (LI_LICENSE, None)))
+    return out
+
+
+# ── Abschnitt: Straffälligkeit ────────────────────────────────────────────────
+
+CRIME_CAVEATS = [
+    "Zähler und Nenner passen nicht zusammen: «Ausland» im Zähler enthält auch Personen ohne Wohnsitz (Touristen, Durchreisende, Grenzgänger, "
+    "Pendler), der Nenner nur die ausländische Wohnbevölkerung. Die Rate für «Ausland» wird dadurch überschätzt — besonders in Liechtenstein, Luxemburg "
+    "und anderen Ländern mit starkem Grenzverkehr.",
+    "Alters- und Geschlechtsstruktur: Straftaten werden überwiegend von jungen Männern begangen; Gruppen mit anderem Alters-/Geschlechtsprofil "
+    "haben deshalb auch bei gleichem Verhalten andere Raten. Die Raten sind nicht standardisiert.",
+    "Anzeigeverhalten und Kontrollen: Es zählen angezeigte bzw. ermittelte Personen, nicht begangene Taten; Anzeigebereitschaft und "
+    "Kontrollintensität können je nach Gruppe verschieden sein.",
+    "Definitionen unterscheiden sich je Land (Verdächtige, Strafverfolgte, Verurteilte; Zählung von Personen/Fällen; Delikte, Jugendstrafrecht). "
+    "Die Zahlen sind für Länder untereinander nur eingeschränkt vergleichbar; Trends im selben Land sind aussagekräftiger.",
+    "«Ausländer» ist nicht «Migrant»: Eingebürgerte zählen als Inländer, Personen ohne Staatsangehörigkeitsangabe fehlen.",
+    "Keine Aussage über Einzelne: Gruppenstatistiken erlauben keinen Rückschluss auf einzelne Personen.",
+]
+
+
+def section_crime(countries: list[str], stage: str, year: int):
+    out = [_card([
+        html.H6([html.I(className="fas fa-triangle-exclamation", style={"marginRight": "8px", "color": FL_GOLD}),
+                 "Wie lesen? Methodische Hinweise zu den Kennzahlen"], style={"color": TEXT}),
+        html.Ul([html.Li(t, style={"marginBottom": "3px"}) for t in CRIME_CAVEATS],
+                style={"color": MUTED, "fontSize": "0.8rem", "paddingLeft": "18px", "marginBottom": "0"})]),
+        html.Div(style={"height": "10px"})]
+    cr = _g(es_id("crime"))
+    fp = _foreign_pop()
+    if cr.empty or fp.empty:
+        return out + [_empty("Keine Daten in der Datenbank.")]
+    c = cr[(cr["unit"] == "NR") & (cr["leg_stat"] == stage) & cr["iso3"].notna()].copy()
+    c["year"] = c["time"].astype(int)
+    pv = c.pivot_table(index=["iso3", "year"], columns="citizen", values="Wert").reset_index()
+    pv = pv.merge(fp[["iso3", "year", "foreign", "NAT", "TOTAL"]].rename(columns={"NAT": "pop_nat", "TOTAL": "pop_total"}),
+                  on=["iso3", "year"], how="inner")
+    pv["rate_for"] = pv["FOR"] / pv["foreign"] * 1e5
+    pv["rate_nat"] = pv["NAT"] / pv["pop_nat"] * 1e5
+    pv["share_for"] = pv["FOR"] / (pv["FOR"] + pv["NAT"]) * 100
+    name = STAGE_NAME[stage]
+
+    # Zeitreihe je Land: Rate Inländer vs Ausländer
+    fig = go.Figure()
+    for i, cc in enumerate(countries):
+        d = pv[pv["iso3"] == cc].sort_values("year")
+        if d.empty:
+            continue
+        col = _col(i, cc)
+        fig.add_trace(go.Scatter(x=d["year"], y=d["rate_nat"], mode="lines+markers", name=f"{_name(cc)}: Staatsangehörige",
+                                 line=dict(color=col, width=2), hovertemplate=f"<b>{_name(cc)}</b> Inländer %{{x}}: %{{y:,.0f}} je 100 000<extra></extra>"))
+        fig.add_trace(go.Scatter(x=d["year"], y=d["rate_for"], mode="lines+markers", name=f"{_name(cc)}: Ausländer*",
+                                 line=dict(color=col, width=2, dash="dot"),
+                                 hovertemplate=f"<b>{_name(cc)}</b> Ausländer* %{{x}}: %{{y:,.0f}} je 100 000<extra></extra>"))
+    _styled(fig, f"{name} je 100 000 der Gruppe (*Zähler inkl. Nichtansässige)")
+    fig.update_xaxes(tickformat="d")
+    out.append(_card(_graph(fig, 400)) if fig.data else _empty("Für die gewählten Länder liegen bei dieser Stufe keine Daten vor."))
+    nodata = [cc for cc in countries if pv[pv["iso3"] == cc].empty]
+    if nodata:
+        out.append(_note("Keine Daten (Eurostat crim_just_ctz) für: " + ", ".join(_name(x) for x in nodata), "fa-triangle-exclamation", FL_GOLD))
+
+    # Vergleich im Jahr: Anteil Ausländer an den Personen vs. Anteil an der Bevölkerung
+    yrs = sorted(pv["year"].unique())
+    use = max([y for y in yrs if y <= year] or [yrs[0]])
+    d = pv[(pv["year"] == use) & (pv["iso3"].isin(countries))].dropna(subset=["share_for"]).copy()
+    if not d.empty:
+        d["pop_share"] = d["foreign"] / d["pop_total"] * 100
+        d = d.sort_values("share_for")
+        f2 = go.Figure()
+        f2.add_trace(go.Bar(y=[_name(x) for x in d["iso3"]], x=d["pop_share"], orientation="h", name="Anteil an der Wohnbevölkerung", marker_color=FL_BLUE))
+        f2.add_trace(go.Bar(y=[_name(x) for x in d["iso3"]], x=d["share_for"], orientation="h", name=f"Anteil an den {name}*", marker_color=FL_RED))
+        _styled(f2, f"Ausländeranteil: Bevölkerung vs. {name}, {use} (%)")
+        f2.update_layout(barmode="group", hovermode="closest", margin=dict(l=100, r=20, t=50, b=40))
+        f2.update_xaxes(ticksuffix=" %")
+        out.append(_card(_graph(f2, max(300, 70 * len(d) + 100))))
+        out.append(_note(f"Gezeigt wird {use}" + ("" if use == year else f" (letztes verfügbares Jahr bis {year})") +
+                         ". Ein höherer Anteil bei den Personen als in der Bevölkerung ist NICHT als Neigung einer Gruppe zu lesen — "
+                         "siehe methodische Hinweise (Nichtansässige, Alter/Geschlecht, Anzeigeverhalten)."))
+    st = _stand(es_id("crime"), es_id("pop_cit"))
+    out.append(_source(("Eurostat crim_just_ctz (Verdächtige/Strafverfolgte/Verurteilte nach Staatsangehörigkeit), Bevölkerung migr_pop1ctz",
+                        URL["es"].format("crim_just_ctz")), (ES_LICENSE, None),
+                       ("Raten je Gruppe: eigene Berechnung (Personen / Wohnbevölkerung der Gruppe am 1.1.)", None),
+                       (f"Stand der Daten: {st:%d.%m.%Y}" if st else "Stand unbekannt", None)))
+
+    # Liechtenstein: Landespolizei
+    li = pv[pv["iso3"] == LI].sort_values("year")
+    cards = [html.H6("Liechtenstein: was die Quellen ausweisen", style={"color": TEXT}),
+             html.P("Eurostat veröffentlicht für Liechtenstein Personen nach Staatsangehörigkeit (Inland/Ausland); das Amt für Statistik hat "
+                    "dazu keine Tabelle auf opendata.li. Die Landespolizei weist in ihren Jahresberichten die Nationalität der Tatverdächtigen "
+                    "aus: Im Jahresbericht 2021 (S. 22) waren von 496 Tatverdächtigen nach Strafgesetzbuch 31 % Liechtensteiner und 69 % "
+                    "ausländische Staatsangehörige; bei den 8 neu verhängten Untersuchungshaften 2021 hatten 5 Personen einen Wohnsitz im "
+                    "Ausland, 2 einen Wohnsitz in Liechtenstein und 1 war Liechtensteiner (S. 34). Die Landespolizeistatistik ist eine "
+                    "«Anzeigenstatistik» mit Tatort Liechtenstein (Hellfeld) und schliesst Personen ohne Wohnsitz in Liechtenstein ein — "
+                    "deshalb ist der Ausländeranteil dort nicht mit dem Anteil an der Wohnbevölkerung (rund 35 %) vergleichbar.",
+                    style={"color": MUTED, "fontSize": "0.82rem"}),
+             html.Div([html.A("Landespolizei Liechtenstein, Jahresberichte", href=URL["lp"], target="_blank", rel="noopener noreferrer",
+                              className="source-link")], className="source-bar")]
+    out.append(_card(cards))
+    return out
+
+
+# ── Abschnitt: Ausgaben ───────────────────────────────────────────────────────
+
+def section_costs():
+    return _card([
+        html.H6([html.I(className="fas fa-circle-info", style={"marginRight": "8px", "color": ACCENT}),
+                 "Ausgaben je Migrant: keine belastbaren, vergleichbaren Daten"], style={"color": TEXT}),
+        html.P("Geprüft wurden Eurostat (keine Sozialschutzausgaben nach Staatsangehörigkeit oder Geburtsland), die OECD (International "
+               "Migration Outlook: fiskalische Effekte als modellbasierte Einzelstudien mit länderspezifischen Annahmen, ohne einheitliche "
+               "Datenreihe) und Liechtenstein (Sozialhilfe, Asylwesen und Landesrechnung liegen im Rechenschaftsbericht und in der "
+               "Landesrechnung als Gesamtbeträge vor, ohne Aufteilung nach Herkunft oder Staatsangehörigkeit). Wirkungen von Zuwanderung auf "
+               "öffentliche Haushalte hängen zudem von Alter, Aufenthaltsdauer, Qualifikation und Berechnungsmethode ab und lassen sich nicht "
+               "aus Einzelzahlen ableiten. Deshalb zeigt dieser Tab dazu bewusst keine Zahlen und rechnet nicht mit Schätzwerten aus dritten "
+               "Quellen.", style={"color": MUTED, "fontSize": "0.85rem", "marginBottom": "0"}),
+    ])
+
+
+# ── Render ────────────────────────────────────────────────────────────────────
+
+def render_migration(data: dict) -> html.Div:
+    ind = data.get("mig_ind") or "cit"
+    countries = [c for c in (data.get("mig_countries") or DEFAULT_COUNTRIES) if c in COUNTRY_NAMES] or DEFAULT_COUNTRIES
+    groups = [g for g in (data.get("mig_groups") or []) if g in GROUPS]
+    year = int(data.get("mig_year") or DEFAULT_YEAR)
+    stage = data.get("mig_stage") or "PER_SUSP"
+    if _g(es_id("pop_cit")).empty and _g(WB_KEY).empty:
+        return html.Div([html.H4("Migration", className="section-title"),
+                         _empty("Noch keine Daten in der Datenbank — der wöchentliche Abruf füllt sie.")])
+    return html.Div([
+        html.H4("Migration – Zahlen, Definitionen, Quellen", className="section-title"),
+        how_to_read(),
+        _section("1 · Anteil an der Bevölkerung", "Liechtenstein im Vergleich; Länder und Gruppen in der Seitenleiste wählbar."),
+        *section_share(ind, countries, groups, year),
+        _section("2 · Liechtenstein im Detail (Amt für Statistik)",
+                 "Amtliche Zahlen zur Wohnbevölkerung nach Staatsangehörigkeit, Grenzgänger getrennt ausgewiesen."),
+        *section_li(),
+        _section("3 · Wanderung, Einbürgerung, Asyl, Arbeitsmarkt"),
+        *section_flows(countries),
+        _section("4 · Straffälligkeit nach Staatsangehörigkeit", "Mit Raten je Gruppe und methodischen Hinweisen direkt an den Kennzahlen."),
+        *section_crime(countries, stage, year),
+        _section("5 · Ausgaben je Migrant"),
+        section_costs(),
+    ])

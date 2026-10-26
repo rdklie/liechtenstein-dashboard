@@ -368,6 +368,9 @@ def _live_fetch(path: str):
     if path.startswith("imf:"):
         from imf import fetch_sdmx
         return fetch_sdmx(path[4:])
+    if path.startswith(("es:", "wb:", "pxs:")):
+        from migration import fetch_source
+        return fetch_source(path)
     from opendata import px_fetch
     return px_fetch(path)
 
