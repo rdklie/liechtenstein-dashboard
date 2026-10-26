@@ -142,6 +142,8 @@ CREATE TABLE IF NOT EXISTS od_catalog (
     subtheme    TEXT,
     publisher   TEXT,
     publisher_source TEXT,
+    data_url    TEXT,
+    data_format TEXT,
     first_seen  TEXT,
     last_seen   TEXT
 );
@@ -193,7 +195,7 @@ CREATE TABLE IF NOT EXISTS od_discovery_log (
 
 # Spalten, die nach dem ersten Release dazukamen (CREATE IF NOT EXISTS ändert bestehende Tabellen nicht)
 _ADDED_COLUMNS = {
-    "od_catalog": [("publisher", "TEXT"), ("publisher_source", "TEXT")],
+    "od_catalog": [("publisher", "TEXT"), ("publisher_source", "TEXT"), ("data_url", "TEXT"), ("data_format", "TEXT")],
 }
 
 
@@ -358,11 +360,23 @@ def read_px_cache(path: str):
     return _unpack_df(r[4]), info, fetched
 
 
+def _live_fetch(path: str):
+    """Quelle nach Präfix: «file:<URL>» (CSV/JSON aus dem Katalog), «imf:<Agentur/Fluss/Version>», sonst PXWeb-Pfad."""
+    if path.startswith("file:"):
+        from opendata import fetch_file
+        return fetch_file(path[5:])
+    if path.startswith("imf:"):
+        from imf import fetch_sdmx
+        return fetch_sdmx(path[4:])
+    from opendata import px_fetch
+    return px_fetch(path)
+
+
 def get_px(path: str, max_age_hours: float | None = 24 * 7, allow_live: bool = False):
     """
-    PX-Tabelle aus dem SQLite-Cache. Mit allow_live=True wird bei fehlendem/veraltetem Cache
-    live nachgeladen (nur für den Daten-Explorer); bei Fehlern gilt veralteter Cache als Fallback.
-    → (df, info) oder (leerer DataFrame, {}).
+    Tabelle aus dem SQLite-Cache (PXWeb-Pfad, «file:<URL>» oder «imf:<Fluss>»). Mit allow_live=True wird bei
+    fehlendem/veraltetem Cache live nachgeladen (Explorer); bei Fehlern gilt veralteter Cache als Fallback.
+    → (df, info) oder (leerer DataFrame, {"error": Meldung} bzw. {}).
     """
     cached = read_px_cache(path)
     fresh = (cached is not None and (max_age_hours is None or
@@ -370,18 +384,31 @@ def get_px(path: str, max_age_hours: float | None = 24 * 7, allow_live: bool = F
     if fresh or not allow_live:
         return (cached[0], cached[1]) if cached else (pd.DataFrame(), {})
     try:
-        from opendata import px_fetch
-        df, info = px_fetch(path)
+        df, info = _live_fetch(path)
         write_px_cache(path, df, info)
         info["fetched_at"] = datetime.utcnow()
         return df, info
     except Exception as e:
-        log.warning("PX-Live-Abruf fehlgeschlagen (%s): %s", path, e)
-        return (cached[0], cached[1]) if cached else (pd.DataFrame(), {})
+        log.warning("Live-Abruf fehlgeschlagen (%s): %s", path, e)
+        if cached:
+            return cached[0], cached[1]
+        return pd.DataFrame(), {"error": str(e)[:200]}
+
+
+def refresh_source(path: str, max_age_days: float = 7) -> str:
+    """Explorer-Quelle (file:/imf:/PXWeb) höchstens alle max_age_days neu laden → 'frisch' | 'aktualisiert'.
+    Fehler werden als Exception weitergegeben (Worker sammelt sie)."""
+    cached = read_px_cache(path)
+    if cached is not None and (datetime.utcnow() - cached[2]).total_seconds() < max_age_days * 86400:
+        return "frisch"
+    df, info = _live_fetch(path)
+    write_px_cache(path, df, info)
+    return "aktualisiert"
 
 
 CATALOG_COLS = ["key", "title", "description", "modified", "kind", "px_path", "formats",
-                "license", "landing_url", "catalog_url", "theme", "subtheme", "publisher", "publisher_source"]
+                "license", "landing_url", "catalog_url", "theme", "subtheme", "publisher", "publisher_source",
+                "data_url", "data_format"]
 
 
 def write_catalog(records: list[dict]):

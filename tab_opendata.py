@@ -19,7 +19,8 @@ import plotly.graph_objects as go
 from dash import ALL, Input, Output, State, callback, clientside_callback, ctx, dcc, html, no_update
 
 from db import get_px, read_catalog, read_discovery_log, read_orgs
-from opendata import LICENSE_TEXT, PORTAL_URL, SOURCE_TEXT, is_time_dim, px_web_url
+from imf import SDMX_FLOWS, SDMX_PREFIX, TERMS_URL_IMF
+from opendata import FILE_PREFIX, LICENSE_TEXT, PORTAL_URL, SOURCE_TEXT, is_time_dim, px_web_url
 from ui import FL_BLUE, FL_RED, FL_GOLD, ACCENT, GREEN, MUTED, TEXT, BORDER, MUNI_PALETTE, _card, _kpi, _styled, _empty
 
 log = logging.getLogger(__name__)
@@ -33,15 +34,50 @@ PREVIEW_ROWS = 40
 # ── Katalog-Helfer ────────────────────────────────────────────────────────────
 
 ALLE = "Alle"
-KIND_LABELS = {"px": "Statistik-Tabelle", "geo": "Geodaten", "file": "Datei", "other": "Sonstiges"}
+KIND_LABELS = {"px": "Statistik-Tabelle", "geo": "Geodaten", "file": "Datei", "other": "Sonstiges", "imf": "IWF-Datenfluss"}
+IMF_PUBLISHER = "Internationaler Währungsfonds (IWF)"
+IMF_PORTAL = "https://data.imf.org/"
 LIST_LIMIT = 80
 
 
-def _px_catalog() -> pd.DataFrame:
+def _explore_id(r) -> str:
+    """Kennung für den Explorer: PXWeb-Pfad, «file:<URL>» (CSV/JSON) oder «imf:<Fluss>»; leer = nicht darstellbar."""
+    if r["kind"] == "px" and r["px_path"]:
+        return r["px_path"]
+    if r["kind"] == "imf":
+        return r["px_path"]
+    if r.get("data_url") and r.get("data_format") in ("csv", "json"):
+        return FILE_PREFIX + r["data_url"]
+    return ""
+
+
+def _catalog_all() -> pd.DataFrame:
+    """Katalog von opendata.li plus die IWF-SDMX-Datenflüsse (als Pseudo-Einträge) mit Spalte explore_id."""
     cat = read_catalog()
     if cat.empty:
         return cat
-    return cat[(cat["kind"] == "px") & (cat["px_path"] != "")].copy()
+    for col in ("publisher", "data_url", "data_format"):
+        if col not in cat.columns:
+            cat[col] = ""
+    cat["publisher"] = cat["publisher"].fillna("Nicht zuordenbar")
+    imf_rows = pd.DataFrame([{
+        "key": f"IWF {fid}", "title": f"{name} — Liechtenstein", "description": "", "modified": "", "kind": "imf",
+        "px_path": SDMX_PREFIX + flow, "formats": "json", "license": "IMF Terms", "landing_url": IMF_PORTAL,
+        "catalog_url": IMF_PORTAL, "theme": "", "subtheme": "IWF", "publisher": IMF_PUBLISHER,
+        "publisher_source": "extern (IWF SDMX-API)", "data_url": "", "data_format": "",
+        "first_seen": "", "last_seen": "",
+    } for flow, name in SDMX_FLOWS.items() for fid in [flow.split("/")[1]]])
+    cat = pd.concat([cat, imf_rows], ignore_index=True)
+    cat["explore_id"] = [_explore_id(r) for r in cat.to_dict("records")]
+    return cat
+
+
+def _px_catalog() -> pd.DataFrame:
+    """Alle im Explorer darstellbaren Einträge (PXWeb, CSV/JSON, IWF)."""
+    cat = _catalog_all()
+    if cat.empty:
+        return cat
+    return cat[cat["explore_id"] != ""].copy()
 
 
 def _publisher_counts(cat_all: pd.DataFrame) -> list[tuple[str, int]]:
@@ -78,20 +114,25 @@ def _filter_catalog(cat_all: pd.DataFrame, org: str | None, kind: str | None, th
 
 
 def _table_options(cat: pd.DataFrame) -> list[dict]:
-    """Optionen des Tabellen-Dropdowns: nur Statistik-Tabellen aus dem gefilterten Katalog."""
-    cat = cat[(cat["kind"] == "px") & (cat["px_path"] != "")]
+    """Optionen des Tabellen-Dropdowns: alle darstellbaren Einträge (PXWeb, CSV/JSON, IWF) des gefilterten Katalogs."""
+    cat = cat[cat["explore_id"] != ""]
     if cat.empty:
         return []
-    cat = cat.sort_values(["theme", "subtheme", "key"])
-    return [{"label": f"{r.key} · {r.title}", "value": r.px_path, "search": f"{r.key} {r.title} {r.subtheme}"}
-            for r in cat.itertuples()]
+    cat = cat.sort_values(["kind", "theme", "subtheme", "key"])
+    prefix = {"px": "", "file": "[Datei] ", "imf": "[IWF] "}
+    def name(r):
+        key = r.key if len(str(r.key)) <= 16 else ""          # lange Hash-Kennungen weglassen
+        return f"{prefix.get(r.kind, '')}{key + ' · ' if key else ''}{r.title}"
+
+    return [{"label": name(r), "value": r.explore_id,
+             "search": f"{r.key} {r.title} {r.subtheme} {r.publisher}"} for r in cat.itertuples()]
 
 
 def _default_path(cat: pd.DataFrame) -> str | None:
     if cat.empty:
         return None
     hit = cat[cat["key"] == DEFAULT_TABLE_ID]
-    return (hit if not hit.empty else cat).iloc[0]["px_path"]
+    return (hit if not hit.empty else cat).iloc[0]["explore_id"]
 
 
 def _catalog_list(d: pd.DataFrame) -> html.Div:
@@ -103,9 +144,9 @@ def _catalog_list(d: pd.DataFrame) -> html.Div:
     for r in d.head(LIST_LIMIT).itertuples():
         link = r.landing_url or r.catalog_url
         title = html.A(r.title, href=link, target="_blank", rel="noopener noreferrer", className="source-link") if link else r.title
-        action = (html.Button("öffnen", id={"type": "od-open", "path": r.px_path}, className="copy-btn",
+        action = (html.Button("öffnen", id={"type": "od-open", "path": r.explore_id}, className="copy-btn",
                               style={"width": "auto", "padding": "2px 10px", "fontSize": "0.72rem"})
-                  if r.kind == "px" and r.px_path else "")
+                  if r.explore_id else "")
         rows.append(html.Tr([html.Td(KIND_LABELS.get(r.kind, r.kind)), html.Td(title), html.Td(r.publisher or "–"),
                              html.Td(r.formats or "–"), html.Td(r.modified or "–"), html.Td(action)]))
     more = (html.P(f"Es werden die ersten {LIST_LIMIT} von {len(d)} Treffern gezeigt — Filter einschränken.",
@@ -121,17 +162,18 @@ def _catalog_list(d: pd.DataFrame) -> html.Div:
 # ── Layout ────────────────────────────────────────────────────────────────────
 
 def render_opendata() -> html.Div:
-    cat_all = read_catalog()
+    cat_all = _catalog_all()
     cat = _px_catalog()
     if cat_all.empty:
         return html.Div([
             html.H4("Open Data – opendata.li", className="section-title"),
             _empty("Der Katalog ist noch nicht geladen — der wöchentliche Discovery-Lauf (discover.py) füllt ihn."),
         ])
-    if "publisher" not in cat_all.columns or cat_all["publisher"].isna().all():
-        cat_all["publisher"] = "Nicht zuordenbar"        # Katalog vor der Migration: nächster Discovery-Lauf füllt es
 
-    n_px, n_other = len(cat), len(cat_all) - len(cat)
+    n_px = int((cat_all["kind"] == "px").sum())
+    n_files = int((cat["kind"] == "file").sum())
+    n_imf = int((cat_all["kind"] == "imf").sum())
+    n_other = int((~cat_all["kind"].isin(["px", "imf"])).sum())
     last_seen = cat_all["last_seen"].max()
     log_df = read_discovery_log(200)
     last_run = log_df["run_at"].max() if not log_df.empty else None
@@ -139,8 +181,9 @@ def render_opendata() -> html.Div:
     pubs = _publisher_counts(cat_all)
 
     kpis = dbc.Row([
-        dbc.Col(_kpi("fa-table", "Statistik-Tabellen (PXWeb)", f"{n_px}", FL_BLUE, "Amt für Statistik"), md=3, sm=6, className="mb-3"),
-        dbc.Col(_kpi("fa-map", "Geodaten & Dateien", f"{n_other}", FL_RED, "WMS, ZIP, CSV/JSON"), md=3, sm=6, className="mb-3"),
+        dbc.Col(_kpi("fa-table", "Statistik-Tabellen (PXWeb)", f"{n_px}", FL_BLUE,
+                     f"+ {n_files} CSV/JSON-Dateien, {n_imf} IWF-Datenflüsse darstellbar"), md=3, sm=6, className="mb-3"),
+        dbc.Col(_kpi("fa-map", "Geodaten & Sonstiges", f"{n_other}", FL_RED, "WMS, ZIP — verlinkt"), md=3, sm=6, className="mb-3"),
         dbc.Col(_kpi("fa-building-columns", "Amtsstellen mit Daten", f"{sum(1 for _, n in pubs if n)}", FL_GOLD,
                      f"{len(pubs)} im Katalog geführt"), md=3, sm=6, className="mb-3"),
         dbc.Col(_kpi("fa-bell", "Funde im letzten Lauf", f"{n_events}" if last_run else "–", GREEN,
@@ -150,7 +193,7 @@ def render_opendata() -> html.Div:
     themes = [ALLE] + sorted(t for t in cat["theme"].unique() if t)
     kinds = [{"label": "Alle Arten", "value": ALLE}] + [
         {"label": f"{KIND_LABELS[k]} ({int((cat_all['kind'] == k).sum())})", "value": k}
-        for k in ("px", "geo", "file", "other") if (cat_all["kind"] == k).any()]
+        for k in ("px", "file", "imf", "geo", "other") if (cat_all["kind"] == k).any()]
     default_path = _default_path(cat)
 
     pub_chips = html.Div([
@@ -161,8 +204,9 @@ def render_opendata() -> html.Div:
 
     filters = _card([
         html.H6("Katalog filtern", style={"color": TEXT, "marginBottom": "4px"}),
-        html.P("Datensätze je Amtsstelle (Herausgeber laut Katalog). Alle Filter lassen sich kombinieren und gelten für die "
-               "Tabellenliste im Explorer und die Trefferliste darunter — auch für Geodaten und Dateien.",
+        html.P("Datensätze je Amtsstelle (Herausgeber laut Katalog; die IWF-Datenflüsse kommen direkt vom IWF). Alle Filter lassen "
+               "sich kombinieren und gelten für die Tabellenliste im Explorer und die Trefferliste darunter — auch für Geodaten und "
+               "Dateien. CSV/JSON-Dateien und IWF-Datenflüsse lassen sich wie Statistik-Tabellen als Diagramm darstellen.",
                style={"color": MUTED, "fontSize": "0.78rem"}),
         pub_chips,
         dbc.Row([
@@ -229,8 +273,8 @@ def render_opendata() -> html.Div:
         html.I(className="fas fa-database", style={"marginRight": "6px", "color": MUTED}),
         html.Span("Quelle: ", style={"color": MUTED}),
         html.A("opendata.li", href=PORTAL_URL, target="_blank", rel="noopener noreferrer", className="source-link"),
-        html.Span(f" · Herausgeber je Datensatz laut Katalog · Statistik-Tabellen: {SOURCE_TEXT} · Lizenz: {LICENSE_TEXT}",
-                  style={"color": MUTED}),
+        html.Span(f" · Herausgeber je Datensatz laut Katalog · Statistik-Tabellen: {SOURCE_TEXT} · Lizenz: {LICENSE_TEXT} · "
+                  "IWF-Datenflüsse: International Monetary Fund, SDMX-API (Quellenangabe, nicht-kommerziell)", style={"color": MUTED}),
     ], className="source-bar")
 
     return html.Div([
@@ -248,9 +292,7 @@ def render_opendata() -> html.Div:
           Input("od-org", "value"), Input("od-kind", "value"), Input("od-theme", "value"), Input("od-search", "value"),
           State("od-table", "value"), prevent_initial_call=True)
 def _apply_filters(org, kind, theme, query, current):
-    cat_all = read_catalog()
-    if "publisher" not in cat_all.columns:
-        cat_all["publisher"] = "Nicht zuordenbar"
+    cat_all = _catalog_all()
     d = _filter_catalog(cat_all, org, kind, theme, query)
     opts = _table_options(d)
     values = {o["value"] for o in opts}
@@ -293,7 +335,7 @@ def _pick_defaults(df: pd.DataFrame, dims: list[str]) -> tuple[str, str]:
             break
     else:
         for d in others:
-            if 2 <= df[d].nunique() <= 12:
+            if d.lower() not in ("frequency", "frequenz") and 2 <= df[d].nunique() <= 12:
                 group = d
                 break
     return x, group
@@ -393,6 +435,35 @@ def _figure(sub: pd.DataFrame, info: dict, x: str, group: str) -> go.Figure:
     return fig
 
 
+def _source_line(path: str, stand: str) -> html.Div:
+    """Quellenzeile je Art der Quelle (PXWeb, CSV/JSON-Datei aus dem Katalog, IWF)."""
+    icon = html.I(className="fas fa-database", style={"marginRight": "6px", "color": MUTED})
+    if path.startswith(SDMX_PREFIX):
+        return html.Div([icon, html.Span("Quelle: ", style={"color": MUTED}),
+                         html.A("International Monetary Fund, SDMX-API (" + path[len(SDMX_PREFIX):].split("/")[1] + ")",
+                                href=IMF_PORTAL, target="_blank", rel="noopener noreferrer", className="source-link"),
+                         html.Span(" · Lizenz: ", style={"color": MUTED}),
+                         html.A("IWF-Datenbedingungen", href=TERMS_URL_IMF, target="_blank", rel="noopener noreferrer",
+                                className="source-link"),
+                         html.Span(f" (Quellenangabe, nicht-kommerziell){stand}", style={"color": MUTED})],
+                        className="source-bar")
+    if path.startswith(FILE_PREFIX):
+        row = _px_catalog()
+        row = row[row["explore_id"] == path]
+        publisher = row["publisher"].iloc[0] if not row.empty else "opendata.li"
+        page = (row["catalog_url"].iloc[0] if not row.empty else "") or PORTAL_URL
+        return html.Div([icon, html.Span("Quelle: ", style={"color": MUTED}),
+                         html.A(f"{publisher} via opendata.li", href=page, target="_blank", rel="noopener noreferrer",
+                                className="source-link"),
+                         html.Span(f" · Datei: {path[len(FILE_PREFIX):]} · Lizenz: {LICENSE_TEXT}{stand}",
+                                   style={"color": MUTED})], className="source-bar")
+    return html.Div([icon, html.Span("Quelle: ", style={"color": MUTED}),
+                     html.A("PXWeb-Tabelle beim Amt für Statistik", href=px_web_url(path), target="_blank",
+                            rel="noopener noreferrer", className="source-link"),
+                     html.Span(f" · {SOURCE_TEXT} · Lizenz: {LICENSE_TEXT}{stand}", style={"color": MUTED})],
+                    className="source-bar")
+
+
 def _preview(sub: pd.DataFrame) -> html.Div:
     head = sub.head(PREVIEW_ROWS)
     cols = list(head.columns)
@@ -411,7 +482,8 @@ def _render_table(path, x, group, flt_values, flt_ids):
         return _empty("Tabelle wählen.")
     df, info = get_px(path, allow_live=True)
     if df.empty:
-        return _empty("Tabelle konnte nicht geladen werden (PXWeb nicht erreichbar?).")
+        msg = info.get("error") or "Tabelle konnte nicht geladen werden (Quelle nicht erreichbar?)."
+        return _empty(f"Datei/Tabelle nicht darstellbar: {msg}")
     if x not in df.columns:
         return no_update  # Zwischenzustand beim Tabellenwechsel
     sub = df
@@ -422,7 +494,11 @@ def _render_table(path, x, group, flt_values, flt_ids):
     if sub.dropna(subset=["Wert"]).empty:
         return _empty("Für diese Auswahl gibt es keine Werte (Filter ändern).")
 
-    fig = _figure(sub, info, x, group)
+    if not info.get("title"):
+        row = _px_catalog()
+        row = row[row["explore_id"] == path]
+        info = {**info, "title": row["title"].iloc[0] if not row.empty else ""}
+    fig = _figure(sub, info or {}, x, group)
     fetched = info.get("fetched_at")
     stand = f" · Stand der Daten: {fetched:%d.%m.%Y}" if fetched else ""
     notes = []
@@ -430,13 +506,7 @@ def _render_table(path, x, group, flt_values, flt_ids):
         notes.append(html.P("Die Tabelle ist gross; für diese Ansicht wurden Dimensionen auf den ersten Wert "
                             f"(meist «Total») reduziert: {', '.join(info['reduced'])}. Vollständig auf opendata.li/PXWeb.",
                             style={"color": FL_GOLD, "fontSize": "0.8rem"}))
-    link = html.Div([
-        html.I(className="fas fa-database", style={"marginRight": "6px", "color": MUTED}),
-        html.Span("Quelle: ", style={"color": MUTED}),
-        html.A("PXWeb-Tabelle beim Amt für Statistik", href=px_web_url(path), target="_blank",
-               rel="noopener noreferrer", className="source-link"),
-        html.Span(f" · {SOURCE_TEXT} · Lizenz: {LICENSE_TEXT}{stand}", style={"color": MUTED}),
-    ], className="source-bar")
+    link = _source_line(path, stand)
     return html.Div([
         dcc.Graph(figure=fig, config={"displayModeBar": False}),
         *notes,
@@ -453,5 +523,10 @@ def _download(n, path):
     df, info = get_px(path)
     if df.empty:
         return no_update
-    name = path.rsplit("/", 1)[-1].replace(".px", "")
+    if path.startswith(SDMX_PREFIX):
+        name = "imf-" + path[len(SDMX_PREFIX):].split("/")[1].lower()
+    elif path.startswith(FILE_PREFIX):
+        name = path.rsplit("/", 1)[-1].split("?")[0] or "datei"
+    else:
+        name = path.rsplit("/", 1)[-1].replace(".px", "")
     return dcc.send_data_frame(df.to_csv, f"opendata-li-{name}.csv", index=False, sep=";")

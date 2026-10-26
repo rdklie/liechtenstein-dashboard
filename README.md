@@ -36,7 +36,11 @@ Statistik, abrufbar über die PXWeb-API `https://etab.llv.li/PXWeb/api/v1/de/eTa
   Organisation geführt, hat aber keine Datensätze). Fehlt er, wird die Amtsstelle aus dem Katalog-Bereich (EntryStore-Context) abgeleitet
   und in `od_catalog.publisher_source` als «abgeleitet» markiert; sonst «Nicht zuordenbar» (aktuell keine). 31 Katalogeinträge sind leer
   (ohne Titel/Metadaten) und werden übersprungen. Der Filter (Amtsstelle · Art · Thema · Suche) gilt für Explorer-Dropdown und Trefferliste,
-  auch für Geodaten/Dateien (diese sind verlinkt, nicht darstellbar).
+  auch für Geodaten/Dateien. Geodaten (WMS/ZIP) sind nur verlinkt.
+- **CSV/JSON-Dateien aus dem Katalog** (z. B. die 6 FMA-Datensätze) liest `opendata.fetch_file()` generisch: Kodierung und Trennzeichen werden erkannt,
+  JSON als Liste von Datensätzen (auch GeoJSON-Properties, `{Spalte: [..]}`), Zahlenspalten zu «Wert» (mehrere → «Kennzahl»/«Wert»). Grenzen: 8 MB,
+  200 000 Zeilen, 60 Spalten, ≥ 2 Zeilen; ungültige Dateien werden im Explorer mit einer verständlichen Meldung gemeldet. Cache wie bei PX in `px_cache`
+  (Schlüssel `file:<URL>`), Worker-Refresh höchstens wöchentlich.
 - **Discovery:** `discover.py` (Cron sonntags 05:30 UTC, manuell `~/daten-li/bin/run-discover.sh`) liest Katalog und PXWeb-Baum, vergleicht
   mit dem letzten Stand (`od_catalog`) und meldet neu/geändert/entfernt/«PX-Tabelle nicht im Katalog» in `od_discovery_log`,
   `~/daten-li/data/discovery-report.md` und im Tab «Open Data». Er veröffentlicht nichts automatisch.
@@ -54,13 +58,19 @@ und schreibt `factbook_fields` (Rohtext) und `factbook_values` (geparste Kennzah
 `worldfactbookarchive.org` selbst wird nicht abgerufen: die robots.txt der Seite sperrt KI-Crawler (u. a. `anthropic-ai`, `claudebot`).
 Parser-Grenzen: Bezugsjahre stehen im Text (z. B. «(2024 est.)») und liegen oft vor dem Ausgabejahr; Definitionen wechseln (ab 2021 «Real GDP», Preise 2015).
 
-## IWF (World Economic Outlook)
+## IWF (World Economic Outlook, SDMX-API)
 
-`imf.py` holt über die DataMapper-API (`/api/v1/<Indikator>/LIE`) die 15 Indikatoren, für die der IWF Werte zu Liechtenstein führt
-(BIP, BIP/Kopf, Wachstum, Inflation, Arbeitslosigkeit, Leistungsbilanz, Staatshaushalt/-schulden, Bevölkerung; Jahre 2000–2031, ab dem Ausgabejahr Projektionen).
-Liechtenstein ist kein IWF-Mitglied — es sind IWF-Schätzungen. Der Worker aktualisiert höchstens wöchentlich (15 Abrufe, 1 s Pause); `discover.py`
-prüft wöchentlich alle 132 Indikatoren auf neue LIE-Werte. Quelle/Lizenz: International Monetary Fund, World Economic Outlook — Quellenangabe, nicht-kommerzielle Nutzung
-([Bedingungen](https://www.imf.org/en/About/Copyright-and-Terms)); keine automatisierten Massendownloads, kein LLM-Training.
+Liechtenstein ist seit dem 21. Oktober 2024 IWF-Mitglied (191. Mitglied; Quelle: [IWF-Länderseite](https://www.imf.org/en/countries/lie)).
+- **DataMapper** (`imf.py`, `/api/v1/<Indikator>/LIE`): 15 von 132 Indikatoren haben Werte für Liechtenstein (BIP, BIP/Kopf, Wachstum, Inflation,
+  Arbeitslosigkeit, Leistungsbilanz, Staatshaushalt/-schulden, Bevölkerung; 2000–2031, ab dem Ausgabejahr Projektionen). Nach dem Beitritt unverändert (Prüfung 26.10.2026).
+  Der Worker aktualisiert höchstens wöchentlich (15 Abrufe, 1 s Pause) → Tab «IWF».
+- **SDMX-API** (`api.imf.org/external/sdmx/2.1`, SDMX-JSON): von 102 aktuellen Datenflüssen liefern 15 Reihen mit Werten für `LIE` (WEO mit 33 Reihen, FSI/Financial Soundness
+  Indicators, Wechselkurse, Treibhausgase, WoRLD-Staatseinnahmen, FAS, Klimaindikatoren, Gender Statistics, DIP/PIP-Gegenparteipositionen u. a.; `imf.SDMX_FLOWS`; ANEA hat nur leere Reihen).
+  Sie erscheinen im Tab «Open Data» als Art «IWF-Datenfluss» und werden vom Worker höchstens wöchentlich gespiegelt (`px_cache`, Schlüssel `imf:<Agentur/Fluss/Version>`).
+  Nicht dabei: IFS/CPI/BOP/GFS-Länderdatenflüsse (Abfrage liefert keine Reihen für Liechtenstein).
+- `discover.py` prüft wöchentlich beide Wege auf neue Indikatoren/Datenflüsse (`iwf-neuer-indikator`, `iwf-neuer-datenfluss`) — es wird nichts automatisch eingebunden.
+- Quelle/Lizenz: International Monetary Fund — Quellenangabe, nicht-kommerzielle Nutzung ([Bedingungen](https://www.imf.org/en/About/Copyright-and-Terms)); keine
+  automatisierten Massendownloads, kein LLM-Training.
 
 ## Lokal starten
 

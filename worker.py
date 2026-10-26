@@ -166,6 +166,24 @@ def run():
         except Exception as e:
             log.warning("IWF-Meta nicht lesbar: %s", e)
 
+    # ── Explorer-Quellen: CSV/JSON-Dateien aus dem Katalog + IWF-SDMX-Datenflüsse (höchstens wöchentlich) ──
+    import imf
+    cat = db.read_catalog()
+    targets = [(f"IWF {fid.split('/')[1]}", imf.SDMX_PREFIX + fid) for fid in imf.SDMX_FLOWS]
+    if not cat.empty and "data_url" in cat.columns:
+        for r in cat[cat["data_url"].fillna("") != ""].itertuples():
+            targets.append((r.title, opendata.FILE_PREFIX + r.data_url))
+    log.info("--- Explorer-Quellen (%d, Cache max. 7 Tage) ---", len(targets))
+    for label, path in targets:
+        try:
+            state = db.refresh_source(path)
+            log.info("  %s %s", "✓" if state == "aktualisiert" else "·", f"{label} ({state})")
+            if state == "aktualisiert":
+                _time.sleep(1)
+        except Exception as e:
+            log.error("  ✗ %s — Fehler: %s", label, e)
+            errors.append(f"Explorer {label}: {e}")
+
     # ── Zusammenfassung ───────────────────────────────────────────────────────
     log.info("=" * 60)
     if errors:

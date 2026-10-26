@@ -11,6 +11,7 @@ Die App ruft diese APIs nie beim Seitenaufbau auf, sondern liest aus SQLite (db.
 Nur der Daten-Explorer lädt eine einzelne Tabelle bei Bedarf nach (mit Cache).
 """
 
+import io
 import json
 import logging
 import re
@@ -265,6 +266,7 @@ def fetch_catalog() -> list[dict]:
         if not title:
             continue  # Platzhalter-Einträge ohne Metadaten
         formats, px_path, license_ = set(), "", ""
+        data_urls: dict[str, str] = {}          # csv/json → Download-URL (für den Datei-Explorer)
         for ref in md.get(_DCAT + "distribution", []):
             d = dists.get(ref["value"], {})
             fmt = (d.get(_DCT + "format") or [{}])[0].get("value", "")
@@ -274,6 +276,9 @@ def fetch_catalog() -> list[dict]:
             if not license_:
                 license_ = (d.get(_DCT + "license") or [{}])[0].get("value", "")
             url = (d.get(_DCAT + "accessURL") or [{}])[0].get("value", "")
+            dl = (d.get(_DCAT + "downloadURL") or [{}])[0].get("value", "") or url
+            if fmt in ("csv", "json") and dl and fmt not in data_urls and "/api/v1/de/eTab" not in dl:
+                data_urls[fmt] = dl
             m = re.search(r"/api/v1/de/eTab/+(.+)$", url, re.I)
             if fmt == "json" and m and not px_path:
                 px_path = urllib.parse.unquote(m.group(1))
@@ -308,7 +313,119 @@ def fetch_catalog() -> list[dict]:
             "catalog_url": page or uri,
             "publisher": publisher,
             "publisher_source": pub_source,
+            "data_url": "" if px_path else (data_urls.get("csv") or data_urls.get("json") or ""),
+            "data_format": "" if px_path else ("csv" if "csv" in data_urls else ("json" if "json" in data_urls else "")),
             "theme": px_path.split("/")[0] if px_path else "",
             "subtheme": px_path.split("/")[1] if px_path.count("/") >= 2 else "",
         })
     return records
+
+
+# ── Generische CSV/JSON-Dateien aus dem Katalog ───────────────────────────────
+
+FILE_MAX_BYTES = 8_000_000       # Downloads grösser als 8 MB werden abgelehnt
+FILE_MAX_ROWS = 200_000
+FILE_MAX_COLS = 60
+FILE_MAX_MEASURES = 12           # Breite Tabellen: höchstens so viele Wertspalten
+FILE_PREFIX = "file:"
+
+
+class FileFormatError(ValueError):
+    """Datei nicht lesbar/darstellbar — Meldung ist für Anwender gedacht."""
+
+
+def _download(url: str) -> bytes:
+    time.sleep(PAUSE)
+    try:
+        with _session.get(url, timeout=45, stream=True) as r:
+            r.raise_for_status()
+            declared = int(r.headers.get("Content-Length") or 0)
+            if declared > FILE_MAX_BYTES:
+                raise FileFormatError(f"Datei zu gross ({declared / 1e6:.1f} MB, Grenze {FILE_MAX_BYTES / 1e6:.0f} MB).")
+            buf = bytearray()
+            for chunk in r.iter_content(65536):
+                buf += chunk
+                if len(buf) > FILE_MAX_BYTES:
+                    raise FileFormatError(f"Datei zu gross (über {FILE_MAX_BYTES / 1e6:.0f} MB).")
+            return bytes(buf)
+    except requests.RequestException as e:
+        raise FileFormatError(f"Download fehlgeschlagen: {type(e).__name__}") from e
+
+
+def _decode(raw: bytes) -> str:
+    for enc in ("utf-8-sig", "cp1252"):
+        try:
+            return raw.decode(enc)
+        except UnicodeDecodeError:
+            continue
+    raise FileFormatError("Zeichenkodierung nicht erkannt.")
+
+
+def _json_to_frame(obj) -> pd.DataFrame:
+    """Typische JSON-Formen → DataFrame: Liste von Objekten, {Spalte: [..]}, {"data": [..]}, GeoJSON."""
+    if isinstance(obj, dict):
+        if obj.get("type") == "FeatureCollection" and isinstance(obj.get("features"), list):
+            return pd.json_normalize([f.get("properties", {}) for f in obj["features"]])
+        lists = {k: v for k, v in obj.items() if isinstance(v, list)}
+        if len(lists) == 1 and all(not isinstance(v, list) for k, v in obj.items() if k not in lists):
+            obj = next(iter(lists.values()))
+        elif lists and len({len(v) for v in lists.values()}) == 1 and all(not isinstance(x, (dict, list)) for v in lists.values() for x in v[:5]):
+            return pd.DataFrame(lists)
+        else:
+            raise FileFormatError("JSON-Struktur nicht tabellarisch (kein Array von Datensätzen).")
+    if isinstance(obj, list) and obj and all(isinstance(x, dict) for x in obj[:20]):
+        return pd.json_normalize(obj)
+    raise FileFormatError("JSON enthält keine Liste von Datensätzen.")
+
+
+def fetch_file(url: str, fmt: str | None = None) -> tuple[pd.DataFrame, dict]:
+    """
+    CSV/JSON-Datei laden und als Long-DataFrame (Dimensionen + 'Wert') zurückgeben — dieselbe Form wie px_fetch,
+    damit der Explorer beides gleich darstellt. Wirft FileFormatError mit verständlicher Meldung.
+    Mehrere Zahlenspalten werden zu «Kennzahl»/«Wert» umgeformt, eine einzelne Zahlenspalte heisst «Wert».
+    """
+    raw = _download(url)
+    text = _decode(raw)
+    fmt = (fmt or ("json" if text.lstrip()[:1] in "[{" else "csv")).lower()
+    try:
+        if fmt == "json":
+            df = _json_to_frame(json.loads(text))
+        else:
+            df = pd.read_csv(io.StringIO(text), sep=None, engine="python", nrows=FILE_MAX_ROWS + 1)
+    except FileFormatError:
+        raise
+    except Exception as e:
+        raise FileFormatError(f"Datei nicht lesbar als {fmt.upper()}: {str(e)[:120]}") from e
+    if len(df) < 2 or len(df.columns) < 2:
+        raise FileFormatError("Datei enthält keine auswertbare Tabelle (weniger als 2 Zeilen oder nur eine Spalte).")
+    if len(df) > FILE_MAX_ROWS:
+        raise FileFormatError(f"Zu viele Zeilen (über {FILE_MAX_ROWS:,}).".replace(",", "’"))
+    if len(df.columns) > FILE_MAX_COLS:
+        raise FileFormatError(f"Zu viele Spalten ({len(df.columns)}, Grenze {FILE_MAX_COLS}).")
+
+    df.columns = [str(c).strip() for c in df.columns]
+    numeric, dims = [], []
+    for c in df.columns:
+        col = pd.to_numeric(df[c], errors="coerce") if df[c].dtype == object else df[c]
+        is_num = pd.api.types.is_numeric_dtype(col) and (col.notna().mean() >= 0.9 if df[c].dtype == object else True)
+        # Jahreszahlen/Codes sind Dimensionen, keine Messwerte
+        if is_num and not (c.lower() in ("jahr", "year", "datum", "stichtag") or c.lower().endswith(("jahr", "year"))):
+            df[c] = col
+            numeric.append(c)
+        else:
+            dims.append(c)
+    if not numeric:
+        raise FileFormatError("Keine numerische Spalte gefunden — nichts zum Darstellen.")
+    unit = ""
+    if "Wert" in numeric:
+        df = df[dims + ["Wert"]]
+    elif len(numeric) == 1:
+        unit = numeric[0]
+        df = df[dims + numeric].rename(columns={numeric[0]: "Wert"})
+    else:
+        df = df.melt(id_vars=dims, value_vars=numeric[:FILE_MAX_MEASURES], var_name="Kennzahl", value_name="Wert")
+        dims = dims + ["Kennzahl"]
+    for c in dims:
+        df[c] = df[c].astype(str)
+    return df, {"path": FILE_PREFIX + url, "title": "", "dims": dims, "unit": unit, "reduced": [], "rows": len(df),
+                "bytes": len(raw)}

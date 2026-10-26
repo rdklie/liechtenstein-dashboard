@@ -2,8 +2,8 @@
 tab_imf.py — Tab «IWF (WEO)»
 ============================
 IWF-Indikatoren für Liechtenstein (World Economic Outlook, DataMapper API), vom Worker höchstens
-wöchentlich nach SQLite gespiegelt. Liechtenstein ist kein IWF-Mitglied: die Werte sind IWF-
-Schätzungen/-Projektionen. Quelle: International Monetary Fund, World Economic Outlook.
+wöchentlich nach SQLite gespiegelt. Liechtenstein ist seit dem 21. Oktober 2024 IWF-Mitglied
+(191. Mitglied, laut IWF-Länderseite imf.org/en/countries/lie); die gezeigten WEO-Werte sind IWF-Schätzungen/-Projektionen. Quelle: International Monetary Fund, World Economic Outlook.
 Lizenz: IWF-Datenbedingungen (Quellenangabe, nicht-kommerzielle Nutzung).
 """
 
@@ -15,7 +15,7 @@ import plotly.graph_objects as go
 from dash import dcc, html
 
 from db import read_imf, read_imf_info
-from imf import INDICATORS
+from imf import INDICATORS, SDMX_FLOWS
 from ui import FL_BLUE, FL_RED, FL_GOLD, ACCENT, GREEN, MUTED, BORDER, _card, _kpi, _styled, _empty
 
 TERMS_URL = "https://www.imf.org/en/About/Copyright-and-Terms"
@@ -82,16 +82,22 @@ def render_imf() -> html.Div:
     ):
         r = last_actual(code)
         if r is not None:
-            kpis.append(dbc.Col(_kpi(icon, f"{label} ({int(r['year'])})", fmt(r["value"]), color, "IWF-Schätzung"),
+            kpis.append(dbc.Col(_kpi(icon, f"{label} ({int(r['year'])})", fmt(r["value"]), color, "IWF-Daten (WEO)"),
                                 md=3, sm=6, className="mb-3"))
 
     notice = dbc.Alert([
         html.I(className="fas fa-circle-info", style={"marginRight": "8px"}),
-        html.B("Liechtenstein ist kein IWF-Mitglied. "),
-        "Der IWF führt es im World Economic Outlook mit eigenen Schätzungen und Projektionen (grau hinterlegt: ab "
-        f"{cut}); es gibt keinen Länderbericht und keine Meldungen aus Liechtenstein. Von 132 DataMapper-Indikatoren liefern "
-        f"{len(INDICATORS)} Werte für Liechtenstein. Die Werte können von den amtlichen Zahlen des Amts für Statistik "
-        "und der Weltbank abweichen.",
+        html.B("Liechtenstein ist seit dem 21. Oktober 2024 IWF-Mitglied "),
+        "(191. Mitglied, Quote 100 Mio. SDR; ",
+        html.A("IWF-Länderseite", href="https://www.imf.org/en/countries/lie", target="_blank", rel="noopener noreferrer",
+               className="source-link"),
+        "). Die hier gezeigten WEO-Werte sind Schätzungen und Projektionen des IWF (grau hinterlegt: ab "
+        f"{cut}); ob einzelne Werte auf Meldungen Liechtensteins beruhen, weist die Datenbank nicht aus. Der letzte "
+        "Artikel-IV-Bericht ist am 27. März 2025 erschienen. "
+        f"Von 132 DataMapper-Indikatoren liefern {len(INDICATORS)} Werte für Liechtenstein; zusätzlich liefern {len(SDMX_FLOWS)} "
+        "Datenflüsse der IWF-SDMX-API Liechtenstein-Reihen (u. a. Financial Soundness Indicators, Wechselkurse, Treibhausgase, "
+        "Staatseinnahmen) — sie stehen im Tab «Open Data» (Art «IWF-Datenfluss»). Die Werte können von den amtlichen Zahlen "
+        "des Amts für Statistik und der Weltbank abweichen.",
     ], color="secondary", style={"fontSize": "0.8rem", "background": "#161B22", "border": f"1px solid {BORDER}", "color": MUTED})
 
     charts = [

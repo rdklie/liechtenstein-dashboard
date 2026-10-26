@@ -128,6 +128,15 @@ def run() -> int:
                 events.append({"event": "iwf-indikator-ohne-daten", "ref": code, "title": imf.INDICATORS[code][0],
                                "detail": "keine Werte mehr für LIE"})
         probes.append((f"IWF DataMapper: {len(imf_hits)} Indikatoren mit LIE-Werten", "ok"))
+        flows = imf.list_sdmx_flows_with_data()
+        for fid, (name, n) in sorted(flows.items()):
+            if fid not in imf.SDMX_FLOWS:
+                events.append({"event": "iwf-neuer-datenfluss", "ref": fid, "title": name, "detail": f"{n} Reihen für LIE (seit 2022)"})
+        for fid in imf.SDMX_FLOWS:
+            if fid not in flows:
+                events.append({"event": "iwf-datenfluss-ohne-daten", "ref": fid, "title": imf.SDMX_FLOWS[fid],
+                               "detail": "keine Reihen für LIE seit 2022"})
+        probes.append((f"IWF SDMX: {len(flows)} Datenflüsse mit LIE-Werten", "ok"))
     except Exception as e:
         log.warning("IWF-Prüfung fehlgeschlagen: %s", e)
         probes.append(("IWF DataMapper", f"Fehler ({type(e).__name__})"))
