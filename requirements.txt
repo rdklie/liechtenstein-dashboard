@@ -7,3 +7,6 @@ sqlalchemy==2.1.6
 gunicorn==26.2.0
 pypdf==6.21.2
 fonttools==4.67.0
+statsmodels==0.15.0
+scipy==1.17.1
+patsy==1.0.3

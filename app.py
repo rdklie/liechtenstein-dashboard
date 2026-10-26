@@ -37,6 +37,7 @@ import tab_factbook
 import tab_imf
 import tab_klima
 import tab_korrelation
+import tab_prognose
 import tab_migration
 import tab_police
 import tab_opendata
@@ -138,7 +139,7 @@ HEADER = html.Div(
                     html.Span("🇱🇮", style={"fontSize": "2rem", "marginRight": "12px"}),
                     html.Div([
                         html.H1("Liechtenstein Dashboard", className="header-title"),
-                        html.P("Wirtschaft · Bevölkerung · Klima · Tourismus · Wohnen · Open Data · Factbook · IWF · Migration · Polizeistatistik · Klimawandel · Korrelations-Labor", className="header-sub"),
+                        html.P("Wirtschaft · Bevölkerung · Klima · Tourismus · Wohnen · Open Data · Factbook · IWF · Migration · Polizeistatistik · Klimawandel · Korrelations-Labor · Prognosen", className="header-sub"),
                     ]),
                 ], className="header-left"),
                 html.Div([
@@ -197,6 +198,7 @@ def _build_sidebar() -> html.Div:
                                 dcc.Tab(label="Polizeistatistik", value="polizei", className="stab", selected_className="stab-selected"),
                                 dcc.Tab(label="Klimawandel", value="klimawandel", className="stab", selected_className="stab-selected"),
                                 dcc.Tab(label="Korrelations-Labor", value="korrelation", className="stab", selected_className="stab-selected"),
+                                dcc.Tab(label="Prognosen", value="prognose", className="stab", selected_className="stab-selected"),
                             ],
                         ),
                     ], className="filter-section"),
@@ -294,6 +296,7 @@ def _build_sidebar() -> html.Div:
                     tab_police.sidebar_section(),
                     tab_klima.sidebar_section(),
                     tab_korrelation.sidebar_section(),
+                    tab_prognose.sidebar_section(),
 
                     html.Hr(className="filter-hr"),
 
@@ -466,11 +469,14 @@ def filters_to_url(tab, year, indicators, weather_year, weather_vars, municipali
     Input("kor-b",                 "value"),
     Input("kor-how",               "value"),
     Input("kor-lag",               "value"),
+    Input("fc-series",             "value"),
+    Input("fc-thr",                "value"),
+    Input("fc-opts",               "value"),
 )
 def render_content(tab, year, indicators, weather_year, weather_vars, municipality, tourism_year,
                    housing_muni, housing_rent, factbook_mode, mig_ind, mig_countries, mig_groups, mig_year,
                    pol_countries, pol_stage, pol_year, kl_muni, kl_index, kl_years,
-                   kor_a, kor_b, kor_how, kor_lag):
+                   kor_a, kor_b, kor_how, kor_lag, fc_series, fc_thr, fc_opts):
     data = {
         "tab":          tab          or "uebersicht",
         "year":         year         or DEFAULT_YEAR,
@@ -487,8 +493,11 @@ def render_content(tab, year, indicators, weather_year, weather_vars, municipali
         "pol_countries": pol_countries, "pol_stage": pol_stage, "pol_year": pol_year,
         "kl_muni": kl_muni, "kl_index": kl_index, "kl_years": kl_years,
         "kor_a": kor_a, "kor_b": kor_b, "kor_how": kor_how, "kor_lag": kor_lag,
+        "fc_series": fc_series, "fc_thr": fc_thr, "fc_opts": fc_opts,
     }
-    if data["tab"] == "korrelation":
+    if data["tab"] == "prognose":
+        return tab_prognose.render_prognose(data)
+    elif data["tab"] == "korrelation":
         return tab_korrelation.render_korrelation(data)
     elif data["tab"] == "klimawandel":
         return tab_klima.render_klima(data)
@@ -525,11 +534,12 @@ def render_content(tab, year, indicators, weather_year, weather_vars, municipali
     Output("filter-police", "style"),
     Output("filter-klima2", "style"),
     Output("filter-kor", "style"),
+    Output("filter-fc", "style"),
     Input("tab-select", "value"),
 )
 def toggle_filters(tab):
     show, hide = {"display": "block"}, {"display": "none"}
-    order = ["wirtschaft", "tourismus", "klima", "wohnen", "factbook", "migration", "polizei", "klimawandel", "korrelation"]
+    order = ["wirtschaft", "tourismus", "klima", "wohnen", "factbook", "migration", "polizei", "klimawandel", "korrelation", "prognose"]
     return tuple(show if tab == t else hide for t in order)
 
 

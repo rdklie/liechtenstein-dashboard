@@ -23,6 +23,7 @@ Tabellen:
   police_reports        — Berichtsdateien (URL, SHA-256, Abrufdatum, Fehler)
   clim_daily            — ERA5-Tageswerte je Gemeinde und Jahr (Open-Meteo), komprimiert
   clim_annual           — daraus berechnete Jahreskennzahlen (Hitzetage, Frosttage, …)
+  fc_results            — Projektionen je Reihe (Rückwärtstest, Intervalle), vom Worker berechnet
   imf_data              — IWF DataMapper: Indikatoren für Liechtenstein (falls vorhanden)
 """
 
@@ -243,6 +244,12 @@ CREATE TABLE IF NOT EXISTS clim_annual (
     prec        FLOAT,
     snow        FLOAT,
     PRIMARY KEY (muni, year)
+);
+
+CREATE TABLE IF NOT EXISTS fc_results (
+    series      TEXT PRIMARY KEY,
+    payload     TEXT,
+    computed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
 CREATE TABLE IF NOT EXISTS imf_meta (
@@ -623,6 +630,26 @@ def write_clim_annual(df: pd.DataFrame):
 
 def read_clim_annual() -> pd.DataFrame:
     return _read("SELECT * FROM clim_annual ORDER BY muni, year")
+
+
+def write_fc(series: str, payload: dict):
+    engine = _get_engine()
+    if engine is None:
+        return
+    with engine.connect() as conn:
+        conn.execute(text("DELETE FROM fc_results WHERE series = :s"), {"s": series})
+        conn.execute(text("INSERT INTO fc_results (series, payload, computed_at) VALUES (:s, :p, :t)"),
+                     {"s": series, "p": json.dumps(payload), "t": datetime.utcnow()})
+        conn.commit()
+
+
+def read_fc_all() -> dict:
+    """{Reihen-ID: {payload: dict, computed: datetime}}"""
+    d = _read("SELECT series, payload, computed_at FROM fc_results")
+    out = {}
+    for r in d.itertuples():
+        out[r.series] = {"payload": json.loads(r.payload), "computed": pd.to_datetime(r.computed_at).to_pydatetime()}
+    return out
 
 
 def write_imf(df: pd.DataFrame, indicator: str):

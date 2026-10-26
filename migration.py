@@ -93,6 +93,9 @@ MIG_PX = {
                         {"Geschlecht": ["Geschlecht - Total"], "Staatsbürgerschaft": ["Staatsbürgerschaft - Total"],
                          "Monat": ["Jahr"]}),
     "li_unemp":        ("Arbeit und Erwerb/Arbeitslosigkeit/284.101.px", {"Geschlecht": ["Geschlecht - Total"], "Monat": ["Durchschnitt"]}),
+    # Amt für Statistik: eigene Bevölkerungsszenarien 2023–2060 (Prognosen-Tab, nie mit eigenen Projektionen vermischt)
+    "li_scen":         ("Bevölkerung/Bevölkerungsszenarien/219.004d.px",
+                        {"Heimat": ["Heimat - Total"], "Geschlecht": ["Geschlecht - Total"], "Altersklasse": ["Altersklasse - Total"]}),
 }
 
 

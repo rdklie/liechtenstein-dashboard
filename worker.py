@@ -195,6 +195,15 @@ def run():
         log.error("  ✗ Klimaarchiv — Fehler: %s", e)
         errors.append(f"Klimaarchiv: {e}")
 
+    # ── Projektionen (statsmodels, höchstens wöchentlich; Rückwärtstest + Intervalle) ──
+    try:
+        import forecast
+        n = forecast.run_all(max_age_days=7)
+        log.info("--- Projektionen: %d Reihen neu berechnet ---", n)
+    except Exception as e:
+        log.error("  ✗ Projektionen — Fehler: %s", e)
+        errors.append(f"Projektionen: {e}")
+
     # ── Zusammenfassung ───────────────────────────────────────────────────────
     log.info("=" * 60)
     if errors:

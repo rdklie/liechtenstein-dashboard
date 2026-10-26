@@ -17,6 +17,7 @@ Live unter <https://daten.li>.
 | `tab_migration.py`, `migration.py` | Tab «Migration»: Anteile, Liechtenstein im Detail, Wanderung/Einbürgerung/Asyl, Straffälligkeit |
 | `tab_police.py`, `police.py` | Tab «Polizeistatistik»: Jahresberichte der Landespolizei (Import/Parser) + Eurostat-Kriminalität nach Staatsangehörigkeit |
 | `tab_klima.py`, `climate.py` | Tab «Klimawandel»: ERA5-Langzeitreihen je Gemeinde (Open-Meteo-Archiv), Kennzahlen, Trends |
+| `tab_prognose.py`, `forecast.py` | Tab «Prognosen»: ETS/ARIMA/Theta/Drift mit Rückwärtstest (MASE), 80-/95-%-Bänder, Schwellenrechner, daneben Amt-Szenarien und IWF-Projektionen |
 | `tab_korrelation.py`, `correlate.py` | Tab «Korrelations-Labor»: Reihenkatalog (~120 Jahresreihen), Pearson/Spearman, Transformationen, Zeitverschiebung, Hypothesen-Galerie |
 | `ui.py` | Gemeinsame Farben/Diagramm-Helfer |
 | `deploy/` | Deployment nach cyon |
@@ -131,6 +132,17 @@ Sachlich und quellenbasiert; zu jeder Kennzahl Definition, Quelle, Lizenz und St
   Achsen, Tabelle aller Transformationen (Scheinkorrelations-Check), teilbarer Link (`?tab=korrelation&ka=<A>&kb=<B>&kh=<Transformation>&kl=<Lag>`).
 - **Warnschilder:** n < 15, gemeinsamer Trend (Mann-Kendall beider Reihen), viele getestete Paare/Verschiebungen, keine Kausalität; Autokorrelation macht p-Werte optimistisch.
 - **Hypothesen-Galerie:** kuratierte Fragen mit «warum plausibel» und «dagegen spricht» — als Hypothese gekennzeichnet, kein Beleg. Monatswerte werden nicht angeboten (fast alle Daten sind jährlich).
+
+## Prognosen (Tab «Prognosen»)
+
+Transparente Projektionen — «Projektion, keine Vorhersage». `forecast.py` rechnet im Worker (höchstens wöchentlich; statsmodels wird nur dort importiert, die App liest `fc_results`):
+
+- **Reihen**: Wohnbevölkerung (Amt für Statistik), Bevölkerung (Weltbank), Wohnungsbestand, Übernachtungen, Ankünfte, BIP, BIP pro Kopf, Jahrestemperatur Vaduz (ERA5, sobald Klimadaten geladen sind).
+- **Methoden**: Naive Basis, Drift, ETS, ARIMA (kleine Ordnungsauswahl nach AICc), Theta; Intervalle 80 %/95 %.
+- **Rückwärtstest** (rolling origin ab 60 % der Reihe, Horizont 1–3 Jahre): MASE gegen die naive Basis, Abdeckung der Bänder. **Keine Projektion** (mit Begründung), wenn < 15 aufeinanderfolgende Jahre vorliegen, keine Methode die naive Basis um ≥ 5 % schlägt oder die beste Methode MASE > 2 hat.
+- **Schwellenrechner** («Wann erreicht Liechtenstein X Einwohner?») mit Jahr der zentralen Projektion und 80-%-Bereich (punktweise Wahrscheinlichkeit je Jahr).
+- **Getrennt daneben**: Bevölkerungsszenarien des Amts für Statistik (`pxs:li_scen`, 9 Szenarien bis 2060) und IWF-WEO-Projektionen; nie in die eigene Projektion eingerechnet.
+- Manuell neu rechnen: `python forecast.py` (im App-Verzeichnis, venv aktiv).
 
 ## Lokal starten
 
