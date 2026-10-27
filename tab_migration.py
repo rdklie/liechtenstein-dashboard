@@ -5,13 +5,16 @@ Sachlich und quellenbasiert: amtliche/internationale Quellen (Eurostat, Weltbank
 Liechtenstein, Landespolizei Liechtenstein), jeweils mit Definition, Quelle, Lizenz und Stand.
 Daten kommen aus SQLite (vom Worker höchstens wöchentlich gespiegelt, siehe migration.py).
 
-Bewusst NICHT enthalten: Ausgaben je Migrant (keine belastbare, vergleichbare Statistik — siehe Hinweiskasten)
+Kosten: nur die in der Landesrechnung ausgewiesenen Ausgaben des Landes für das Asylwesen (Konto 590, siehe landesrechnung.py).
+Bewusst NICHT enthalten: Ausgaben je Migrant (keine belastbare, vergleichbare Statistik — siehe Hinweiskasten), Kosten je Gesuch
 und alles, was auf Schätzungen aus dritten Quellen beruhen würde.
 """
 
 import dash_bootstrap_components as dbc
 import pandas as pd
 import plotly.graph_objects as go
+
+import landesrechnung as LR
 from dash import Input, Output, callback, ctx, dcc, html, no_update
 
 from db import get_px, read_px_cache
@@ -587,14 +590,133 @@ def section_crime_pointer():
 
 # ── Abschnitt: Ausgaben ───────────────────────────────────────────────────────
 
+def _chf(x, d=0) -> str:
+    return f"{x:,.{d}f}".replace(",", "’")
+
+
+def _mio(x) -> str:
+    return f"{x / 1e6:,.1f}".replace(",", "’")
+
+
+def section_asyl_costs():
+    """Ausgaben des Landes für das Asylwesen (Landesrechnung, Konto 590) und Bestand der Schutz- und Asylsuchenden."""
+    d = LR.table()
+    last = int(d.index.max())
+    out = []
+    # Abgrenzung
+    out.append(_card([
+        html.H6([html.I(className="fas fa-scale-balanced", style={"marginRight": "8px", "color": ACCENT}),
+                 "Was ist in den Zahlen enthalten — und was nicht?"], style={"color": TEXT}),
+        html.Ul([
+            html.Li([html.B("Enthalten (Konto 590 «Flüchtlingswesen», Erfolgsrechnung): ", style={"color": TEXT}),
+                     "Betreuung im Aufnahmezentrum, Verfahrenskosten, Rechtsberatungen und Verwaltungskosten der Hilfswerke sowie die "
+                     "Sozialhilfe für Asylsuchende / Rückkehrhilfe. «Brutto» ist der Aufwand; «netto» ist der Aufwand abzüglich der "
+                     "Rückerstattungen aus der Lohnverwaltung Asylsuchender (Ertrag)."], style={"marginBottom": "4px"}),
+            html.Li([html.B("Nicht enthalten: ", style={"color": TEXT}),
+                     "Personal- und Sachaufwand der Amtsstellen (z. B. Ausländer- und Passamt, Landespolizei, Gerichte), sonstige Leistungen "
+                     "ausserhalb von Konto 590 (z. B. Schulen, Gesundheit, Prämienverbilligung), Ausgaben der Gemeinden sowie die "
+                     "«Internationale Flüchtlings- und Migrationshilfe» (Konto 591.367.09, Hilfe im Ausland). Die Zahlen zeigen deshalb "
+                     "nicht die gesamten öffentlichen Kosten des Asylbereichs, sondern die Ausgaben auf diesem Konto."], style={"marginBottom": "4px"}),
+            html.Li([html.B("Investitionen getrennt: ", style={"color": TEXT}),
+                     "«Wohnraum für Schutzbedürftige» (Investitionsrechnung, Konto 590.503.00) steht nicht im Aufwand: "
+                     + ", ".join(f"{y}: CHF {_chf(v)}" for y, v in LR.INVEST.items()) + ". In den übrigen geprüften Jahren (2010–2022) gibt es dieses Konto nicht."],
+                    style={"marginBottom": "4px"}),
+            html.Li([html.B("Seit 2022 mit Schutzbedürftigen: ", style={"color": TEXT}),
+                     "Die Bestandszahlen zeigen ab 2022 zusätzlich den Status «Schutzbedürftige» (Amt für Statistik). Die Landesrechnung "
+                     "weist die Sozialhilfe aber unter derselben Bezeichnung aus; eine Aufteilung nach Status oder Herkunft gibt es dort nicht."],
+                    style={"marginBottom": "0"}),
+        ], style={"color": MUTED, "fontSize": "0.8rem", "paddingLeft": "18px", "marginBottom": "0"}),
+    ]))
+    out.append(html.Div(style={"height": "10px"}))
+    # KPIs
+    r = d.loc[last]
+    p = d.loc[last - 1]
+    out.append(dbc.Row([
+        dbc.Col(_kpi("fa-file-invoice-dollar", f"Aufwand brutto {last}", f"CHF {_mio(r['aufwand'])} Mio.", FL_BLUE,
+                     f"Vorjahr {_mio(p['aufwand'])} Mio. · 2020: {_mio(d.loc[2020, 'aufwand'])} Mio."), md=3, sm=6, className="mb-3"),
+        dbc.Col(_kpi("fa-scale-balanced", f"Aufwand netto {last}", f"CHF {_mio(r['netto'])} Mio.", FL_GOLD, "nach Rückerstattungen Lohnverwaltung"), md=3, sm=6, className="mb-3"),
+        dbc.Col(_kpi("fa-hand-holding-heart", "Sozialhilfe / Rückkehrhilfe", f"CHF {_mio(r[LR.COLS[3]])} Mio.", FL_RED,
+                     f"{r[LR.COLS[3]] / r['aufwand'] * 100:.0f} % des Aufwands {last}"), md=3, sm=6, className="mb-3"),
+        dbc.Col(_kpi("fa-house-user", "Betreuung Aufnahmezentrum", f"CHF {_mio(r[LR.COLS[0]])} Mio.", GREEN,
+                     f"{r[LR.COLS[0]] / r['aufwand'] * 100:.0f} % des Aufwands {last}"), md=3, sm=6, className="mb-3"),
+    ], className="g-3"))
+
+    # Grafik 1: Aufwand nach Konto
+    colors = [FL_BLUE, MUTED, ACCENT, FL_RED]
+    f = go.Figure()
+    for c, col in zip(LR.COLS, colors):
+        f.add_trace(go.Bar(x=d.index, y=d[c] / 1e6, name=c, marker_color=col,
+                           hovertemplate="%{x}: CHF %{y:.2f} Mio.<extra>" + c + "</extra>"))
+    f.add_trace(go.Scatter(x=d.index, y=d["netto"] / 1e6, mode="lines+markers", name="Aufwand netto", line=dict(color=FL_GOLD, width=2.4),
+                           hovertemplate="%{x}: CHF %{y:.2f} Mio. netto<extra></extra>"))
+    f.update_layout(barmode="stack", legend=dict(orientation="h", y=-0.28, bgcolor="rgba(0,0,0,0)"))
+    _styled(f, "Asylwesen: Aufwand des Landes, Konto 590 (Mio. CHF)")
+    f.update_layout(legend=dict(orientation="h", y=-0.28, bgcolor="rgba(0,0,0,0)"))
+    f.update_xaxes(tickformat="d", dtick=2)
+    f.update_yaxes(ticksuffix="")
+    g1 = _card(_graph(f, 400))
+
+    # Grafik 2: Bestand + Gesuche
+    st = _g(pxs_id("li_asyl_stock"))
+    g2 = _empty("Keine Daten.")
+    if not st.empty:
+        s = st.assign(Jahr=st["Jahr"].astype(int)).dropna(subset=["Wert"])
+        f2 = go.Figure()
+        for typ, col in (("Asylbewerber/innen", FL_BLUE), ("Vorläufig Aufgenommene", FL_GOLD), ("Schutzbedürftige", FL_RED)):
+            q = s[s["Bewilligungstyp"] == typ].sort_values("Jahr")
+            q = q[q["Jahr"] >= 2009]
+            if not q.empty:
+                f2.add_trace(go.Bar(x=q["Jahr"], y=q["Wert"], name=typ, marker_color=col,
+                                    hovertemplate="%{x}: %{y:,.0f} Personen<extra>" + typ + "</extra>"))
+        if f2.data:
+            f2.update_layout(barmode="stack", legend=dict(orientation="h", y=-0.28, bgcolor="rgba(0,0,0,0)"))
+            _styled(f2, "Bestand Asyl- und Schutzbereich (Personen)")
+            f2.update_layout(legend=dict(orientation="h", y=-0.28, bgcolor="rgba(0,0,0,0)"))
+            f2.update_xaxes(tickformat="d", dtick=2)
+            g2 = _card(_graph(f2, 400))
+    out.append(dbc.Row([dbc.Col(g1, md=7, className="mb-3"), dbc.Col(g2, md=5, className="mb-3")], className="g-3"))
+    out.append(_note("Warum keine Kosten je Gesuch oder je Person? Die Ausgaben fallen für den Bestand an Personen im Verfahren oder unter Schutz an "
+                     "(über mehrere Jahre), nicht je neues Gesuch; der Bestand ist ein Stichtagswert, die Ausgaben sind ein Jahreswert. "
+                     "Ein Quotient würde Genauigkeit vortäuschen und wird deshalb nicht gerechnet. Die Gesuchszahlen stehen oben in Abschnitt 3. "
+                     "Der Anstieg ab 2022 fällt zeitlich mit der Aufnahme von Schutzbedürftigen zusammen (Bestand 2021: "
+                     f"{_chf(s[(s['Jahr'] == 2021) & (s['Bewilligungstyp'] == 'Bewilligungstyp - Total')]['Wert'].sum()) if not st.empty else '–'} Personen); "
+                     "ein ursächlicher Anteil lässt sich aus den Konten nicht ablesen.", "fa-triangle-exclamation", FL_GOLD))
+
+    # Tabelle mit Quellen je Jahr
+    rows = []
+    for y in sorted(d.index, reverse=True):
+        v = d.loc[y]
+        src = LR.SOURCES[y]
+        rows.append(html.Tr([html.Td(str(y)), html.Td(_chf(v["aufwand"])), html.Td(_chf(v["ertrag"]) if v["ertrag"] else "–"), html.Td(_chf(v["netto"])),
+                             html.Td(_chf(v[LR.COLS[3]])), html.Td(_chf(v[LR.COLS[0]])),
+                             html.Td(html.A(f"{src[0]}, S. {src[2]}", href=src[1], target="_blank", rel="noopener noreferrer", className="source-link")),
+                             html.Td(src[3], style={"color": FL_GOLD})]))
+    out.append(_card([
+        html.H6("Zahlen und Fundstellen je Rechnungsjahr (CHF)", style={"color": TEXT}),
+        html.Div(html.Table([html.Thead(html.Tr([html.Th(h) for h in ("Jahr", "Aufwand brutto", "Ertrag", "Aufwand netto", "Sozialhilfe / Rückkehrhilfe",
+                                                                       "Betreuung Aufnahmezentrum", "Fundstelle (Landesrechnung, Konto 590)", "Hinweis")])),
+                             html.Tbody(rows)], className="od-table"), style={"maxHeight": "420px", "overflowY": "auto", "overflowX": "auto"}),
+    ]))
+    out.append(_note("Seitenzahlen beziehen sich auf den Rechenschaftsbericht (Teil IV Landesrechnung, «Konten der Erfolgsrechnung»). Jede Zahl wurde mit der "
+                     "Vorjahresspalte des folgenden Berichts und mit der Summe der Teilkonten verglichen. Die Landesrechnung 2025 ist die jüngste verfügbare "
+                     f"(Rechnungsjahr {last}). Vor 2009 wurde nicht ausgewertet. Kontoname bis 2010: «Betreuung Flüchtlingszentrum», «Sozialhilfe für Flüchtlinge / Rückkehrhilfe».",
+                     "fa-file-pdf", MUTED))
+    st_ts = _stand(pxs_id("li_asyl_stock"))
+    out.append(_source(("Landesrechnung des Fürstentums Liechtenstein (Regierungskanzlei / Amt für Finanzen), Konto 590", "https://www.llv.li/de/landesverwaltung/amt-fuer-finanzen/wissenswertes/landesrechnung"),
+                       ("Amtliche Publikation, Quellenangabe je Jahr in der Tabelle", None),
+                       ("Bestand: Amt für Statistik 233.302 (opendata.li), CC BY", URL["li"]),
+                       (f"Stand Bestand: {st_ts:%d.%m.%Y}" if st_ts else "Stand Bestand unbekannt", None)))
+    return out
+
+
 def section_costs():
     return _card([
         html.H6([html.I(className="fas fa-circle-info", style={"marginRight": "8px", "color": ACCENT}),
                  "Ausgaben je Migrant: keine belastbaren, vergleichbaren Daten"], style={"color": TEXT}),
         html.P("Geprüft wurden Eurostat (keine Sozialschutzausgaben nach Staatsangehörigkeit oder Geburtsland), die OECD (International "
                "Migration Outlook: fiskalische Effekte als modellbasierte Einzelstudien mit länderspezifischen Annahmen, ohne einheitliche "
-               "Datenreihe) und Liechtenstein (Sozialhilfe, Asylwesen und Landesrechnung liegen im Rechenschaftsbericht und in der "
-               "Landesrechnung als Gesamtbeträge vor, ohne Aufteilung nach Herkunft oder Staatsangehörigkeit). Wirkungen von Zuwanderung auf "
+               "Datenreihe) und Liechtenstein (die Ausgaben für das Asylwesen sind oben aus der Landesrechnung als Gesamtbeträge je Konto gezeigt; "
+               "Sozialhilfe und übrige Leistungen liegen ohne Aufteilung nach Herkunft oder Staatsangehörigkeit vor). Wirkungen von Zuwanderung auf "
                "öffentliche Haushalte hängen zudem von Alter, Aufenthaltsdauer, Qualifikation und Berechnungsmethode ab und lassen sich nicht "
                "aus Einzelzahlen ableiten. Deshalb zeigt dieser Tab dazu bewusst keine Zahlen und rechnet nicht mit Schätzwerten aus dritten "
                "Quellen.", style={"color": MUTED, "fontSize": "0.85rem", "marginBottom": "0"}),
@@ -623,6 +745,8 @@ def render_migration(data: dict) -> html.Div:
         *section_flows(countries),
         _section("4 · Straffälligkeit nach Staatsangehörigkeit"),
         section_crime_pointer(),
-        _section("5 · Ausgaben je Migrant"),
+        _section("5 · Kosten", "Ausgaben des Landes für das Asylwesen (Landesrechnung) und warum es keine Ausgaben je Migrant gibt."),
+        *section_asyl_costs(),
+        html.Div(style={"height": "10px"}),
         section_costs(),
     ])

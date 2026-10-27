@@ -252,6 +252,14 @@ def _build_catalog() -> dict[str, dict]:
         lambda: _year_series(_g(pxs_id("li_naturalisation")).assign(lab=lambda d: d["Einbürgerungsart"].map(_clean)).pipe(lambda d: d[d["lab"] == "Einbürgerung - Total"]), "Jahr"), "Personen")
     add(f"li{SEP}asyl", "Liechtenstein (Amt für Statistik)", "Asylgesuche",
         lambda: _year_series(_fl(_g(pxs_id("li_asylum")), Bewilligungstyp="Asylgesuche"), "Jahr"), "Personen")
+    try:
+        import landesrechnung as LR
+        add(f"li{SEP}asyl_aufwand", "Liechtenstein (Landesrechnung)", "Asylwesen: Aufwand brutto, Konto 590 (Mio. CHF)", lambda: LR.series("aufwand") / 1e6, "Mio. CHF")
+        add(f"li{SEP}asyl_netto", "Liechtenstein (Landesrechnung)", "Asylwesen: Aufwand netto, Konto 590 (Mio. CHF)", lambda: LR.series("netto") / 1e6, "Mio. CHF")
+        add(f"li{SEP}asyl_bestand", "Liechtenstein (Amt für Statistik)", "Bestand Asylbewerber, vorläufig Aufgenommene, Schutzbedürftige (Personen, total)",
+            lambda: _year_series(_fl(_g(pxs_id("li_asyl_stock")), Bewilligungstyp="Bewilligungstyp - Total"), "Jahr"), "Personen")
+    except Exception:
+        pass
     for heimat, lab in (("Heimat - Total", "gesamt"), ("Liechtensteiner", "Liechtensteiner"), ("Ausländer", "Ausländer")):
         add(f"li{SEP}alq_{lab}", "Liechtenstein (Amt für Statistik)", f"Arbeitslosenquote {lab} (%)",
             lambda heimat=heimat: _year_series(_fl(_g(pxs_id("li_unemp")), Heimat=heimat), "Jahr"), "%")

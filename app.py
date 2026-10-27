@@ -591,7 +591,7 @@ AREAS = [
     ("Open Data", "opendata", "Explorer für opendata.li, FMA-Dateien und Katalog", ""),
     ("Factbook", "factbook", "CIA World Factbook, Archiv 1990–2025", ""),
     ("IWF", "imf", "World Economic Outlook für Liechtenstein", ""),
-    ("Migration", "migration", "Anteile, Einbürgerung, Asyl, Zu- und Abwanderung", ""),
+    ("Migration", "migration", "Anteile, Einbürgerung, Asyl, Zu- und Abwanderung, Kosten des Asylwesens", ""),
     ("Bildung", "bildung", "Schulen, Lernende, Studierende, Staatsbürgerschaft der Schulkinder, PISA 2000–2012", ""),
     ("Polizeistatistik", "polizei", "Jahresberichte der Landespolizei 2009–2025", ""),
     ("Politik", "politik", "Externes Angebot faktencheck.li, öffnet in neuem Tab", "ext"),

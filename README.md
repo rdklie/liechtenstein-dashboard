@@ -18,6 +18,7 @@ Live unter <https://daten.li>.
 | `tab_police.py`, `police.py` | Tab «Polizeistatistik»: Jahresberichte der Landespolizei (Import/Parser) + Eurostat-Kriminalität nach Staatsangehörigkeit |
 | `tab_klima.py`, `climate.py` | Tab «Klimawandel»: ERA5-Langzeitreihen je Gemeinde (Open-Meteo-Archiv), Kennzahlen, Trends |
 | `tab_bildung.py`, `bildung.py` | Tab «Bildung»: Schulen, Lernende, Studierende, Staatsbürgerschaft der Schulkinder, Bildungsstand, Bildungsausgaben, PISA 2000–2012 |
+| `landesrechnung.py` | Ausgaben des Landes für das Asylwesen (Landesrechnung Konto 590, 2009–2025) mit Fundstellen; Tab «Migration» Abschnitt 5 |
 | `tab_prognose.py`, `forecast.py` | Tab «Prognosen»: ETS/ARIMA/Theta/Drift mit Rückwärtstest (MASE), 80-/95-%-Bänder, Schwellenrechner, daneben Amt-Szenarien und IWF-Projektionen |
 | `tab_korrelation.py`, `correlate.py` | Tab «Korrelations-Labor»: Reihenkatalog (~120 Jahresreihen), Pearson/Spearman, Transformationen, Zeitverschiebung, Hypothesen-Galerie |
 | `ui.py` | Gemeinsame Farben/Diagramm-Helfer |
@@ -156,6 +157,19 @@ Transparente Projektionen — «Projektion, keine Vorhersage». `forecast.py` re
 - **Lücken** (im Tab unter «Was nicht verfügbar ist» aufgeführt): kein PISA nach 2012, kein OECD-Durchschnitt je Erhebung (keine einheitliche maschinenlesbare Reihe), kein Migrationshintergrund
   (nur Staatsbürgerschaft), keine Abschlussquote, keine Bildungsausgaben nach Stufe (Eurostat `educ_uoe_fine*` ist für LI leer).
 - Korrelations-Labor: Bildungsreihen (`edu|…`) und PISA (`pisa|LIE|…`) im Katalog; PISA gegen den Anteil Schulkinder ohne LI-Staatsbürgerschaft als Hypothese mit Warnhinweisen (nur 3 gemeinsame Jahre).
+
+## Asylwesen-Kosten (Tab «Migration», Abschnitt 5)
+
+`landesrechnung.py` enthält die Ausgaben des Landes auf Konto 590 «Flüchtlingswesen» der Landesrechnung (Erfolgsrechnung), Rechnungsjahre 2009–2025:
+Betreuung Aufnahmezentrum, Verfahrenskosten, Rechtsberatungen/Verwaltungskosten der Hilfswerke, Sozialhilfe für Asylsuchende / Rückkehrhilfe (Aufwand brutto) und Rückerstattungen
+Lohnverwaltung (Ertrag; netto = brutto − Ertrag). Es gibt keine maschinenlesbare Reihe: die Werte sind aus den Rechenschaftsberichten (Teil IV Landesrechnung; llv.li und bua.regierung.li) übertragen,
+je Jahr mit Dokument und Seite (`SOURCES`), gegen die Vorjahresspalte des Folgeberichts und die Summe der Teilkonten geprüft (`landesrechnung.check()` muss `[]` liefern).
+Neues Rechnungsjahr: Zeile in `ROWS` und `SOURCES` ergänzen (Konto 590 im Kapitel «Konten der Erfolgsrechnung»), `check()` laufen lassen.
+
+- Daneben der Bestand Asylbewerber/vorläufig Aufgenommene/Schutzbedürftige (Amt für Statistik 233.302, `pxs:li_asyl_stock`).
+- Bewusst **keine** Kosten je Gesuch oder je Person (Stichtagsbestand vs. Jahresaufwand, mehrjährige Verfahren) und keine Aufteilung nach Herkunft (in der Landesrechnung nicht vorhanden).
+- Nicht enthalten: Personal-/Sachaufwand der Ämter, Leistungen ausserhalb Konto 590, Gemeinden, Hilfe im Ausland (Konto 591.367.09). Investitionsrechnung (590.503.00 «Wohnraum für Schutzbedürftige», 2023–2025) getrennt ausgewiesen.
+- Korrelations-Labor: Reihen `li|asyl_aufwand`, `li|asyl_netto`, `li|asyl_bestand`; zwei Hypothesen mit Warnhinweisen.
 
 ## Lokal starten
 

@@ -64,6 +64,15 @@ HYPOTHESES = [
     ("edu|class_size", "edu|pupils", "level", 0, "Klassengrösse und Zahl der Schulkinder",
      "Mehr Schulkinder könnten zu grösseren Klassen führen.",
      "Beide Reihen enthalten einen Trend; Klassengrösse ist ein gerundeter Durchschnitt, Schulen steuern die Klassenbildung. Prüfen Sie die Zeilen «Veränderung» und «Trend entfernt»."),
+    ("li|asyl_bestand", "li|asyl_aufwand", "level", 0, "Bestand im Asylbereich und Aufwand des Landes (Konto 590)",
+     "Die Ausgaben auf dem Asylkonto sollten dem Bestand der betreuten Personen folgen.",
+     "Beide Reihen steigen seit 2022 stark (Aufnahme von Schutzbedürftigen); in Niveaus ergibt das fast zwangsläufig eine hohe Korrelation, die "
+     "durch gemeinsamen Trend und wenige Ausreisserjahre entsteht. Der Bestand ist ein Stichtagswert, der Aufwand ein Jahreswert, und das Konto "
+     "enthält nicht alle Kosten des Asylbereichs. Prüfen Sie «Veränderung» und «Trend entfernt». Kein Urteil über Personengruppen."),
+    ("li|asyl_aufwand", "li|asyl", "level", 1, "Asylgesuche und Aufwand des Landes im Folgejahr (Konto 590)",
+     "Mehr Gesuche könnten mit zeitlicher Verzögerung zu höheren Ausgaben führen.",
+     "Kosten fallen für den Bestand an, nicht je Gesuch; Verfahren dauern unterschiedlich lang, die Gesuchsreihe beginnt erst 2011 und wird ab 2022 "
+     "um Schutzgesuche ergänzt (hier nur Asylgesuche). Wenige Jahre, ein Ausreisser (2022) bestimmt das Ergebnis weitgehend."),
     ("li|asyl", "li|alq_Ausländer", "diff", 0, "Asylgesuche und Arbeitslosenquote der Ausländer",
      "Mehr Schutzsuchende könnten die Arbeitslosenquote der Ausländer erhöhen.", "Nur wenige Jahre, Asylzahlen springen (2015/2022); Arbeitslosenquote folgt der Konjunktur."),
 ]
@@ -128,7 +137,7 @@ def how_to_read() -> html.Div:
         html.H6([html.I(className="fas fa-book-open", style={"marginRight": "8px", "color": ACCENT}), "Wie lesen? Grundlagen und Grenzen"], style={"color": TEXT}),
         html.Ul([
             item("Reihen", "Jahreswerte aus den bereits geladenen Daten (Amt für Statistik, Eurostat, Weltbank, IWF-Ist-Werte, CIA Factbook-Archiv, Landespolizei, "
-                 "ERA5-Klima, Bildung/Schulen, PISA 2000–2012). Projektionen werden nie korreliert. Jede Reihe nennt ihre Quelle in der Auswahlliste."),
+                 "ERA5-Klima, Bildung/Schulen, PISA 2000–2012, Landesrechnung: Asylwesen). Projektionen werden nie korreliert. Jede Reihe nennt ihre Quelle in der Auswahlliste."),
             item("Pearson / Spearman", "Pearson misst den linearen Zusammenhang der Werte, Spearman den Gleichlauf der Ränge (robuster gegen Ausreisser). "
                  "r liegt zwischen −1 und +1; p ist die Wahrscheinlichkeit, bei fehlendem Zusammenhang und unabhängigen Beobachtungen ein so grosses |r| zu sehen."),
             item("Konfidenzintervall", "95-%-Intervall für r (Fisher-z). Ein breites Intervall heisst: der wahre Zusammenhang ist kaum eingegrenzt."),
