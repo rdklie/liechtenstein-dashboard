@@ -166,8 +166,10 @@ Lohnverwaltung (Ertrag; netto = brutto − Ertrag). Es gibt keine maschinenlesba
 je Jahr mit Dokument und Seite (`SOURCES`), gegen die Vorjahresspalte des Folgeberichts und die Summe der Teilkonten geprüft (`landesrechnung.check()` muss `[]` liefern).
 Neues Rechnungsjahr: Zeile in `ROWS` und `SOURCES` ergänzen (Konto 590 im Kapitel «Konten der Erfolgsrechnung»), `check()` laufen lassen.
 
+- Näherungswerte je Person: Aufwand netto / Mittel aus Bestand Vorjahres- und Jahresende (`landesrechnung.per_capita`), zusätzlich mit Jahresend-Bestand und je Einwohner (Wohnbevölkerung 211.002);
+  im Tab mit Hinweiskasten (nur Konto 590, Stichtag vs. Jahreswert, Sprung 2022). Keine Aufteilung nach Status möglich (Kostenseite hat keine).
 - Daneben der Bestand Asylbewerber/vorläufig Aufgenommene/Schutzbedürftige (Amt für Statistik 233.302, `pxs:li_asyl_stock`).
-- Bewusst **keine** Kosten je Gesuch oder je Person (Stichtagsbestand vs. Jahresaufwand, mehrjährige Verfahren) und keine Aufteilung nach Herkunft (in der Landesrechnung nicht vorhanden).
+- Bewusst **keine** Kosten je Gesuch (Verfahren dauern mehrjährig; Aufwand folgt dem Bestand) und keine Aufteilung nach Herkunft (in der Landesrechnung nicht vorhanden).
 - Nicht enthalten: Personal-/Sachaufwand der Ämter, Leistungen ausserhalb Konto 590, Gemeinden, Hilfe im Ausland (Konto 591.367.09). Investitionsrechnung (590.503.00 «Wohnraum für Schutzbedürftige», 2023–2025) getrennt ausgewiesen.
 - Korrelations-Labor: Reihen `li|asyl_aufwand`, `li|asyl_netto`, `li|asyl_bestand`; zwei Hypothesen mit Warnhinweisen.
 

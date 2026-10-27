@@ -598,6 +598,63 @@ def _mio(x) -> str:
     return f"{x / 1e6:,.1f}".replace(",", "’")
 
 
+def _per_capita_block(d: pd.DataFrame) -> list:
+    """Aufwand netto je Person im Bestand und je Einwohner (Näherungswerte, mit Hinweiskasten)."""
+    pc = LR.per_capita_live()
+    if pc.empty:
+        return []
+    last = int(pc.index.max())
+    r = pc.loc[last]
+    li = lambda *a: html.Li([html.B(a[0], style={"color": TEXT}), a[1]], style={"marginBottom": "4px"})
+    out = [html.Div(style={"height": "6px"}), _card([
+        html.H6([html.I(className="fas fa-triangle-exclamation", style={"marginRight": "8px", "color": FL_GOLD}),
+                 "Je Person: Näherungswerte — bitte mit den Einschränkungen lesen"], style={"color": TEXT}),
+        html.Ul([
+            li("Zähler: ", "Aufwand netto auf Konto 590 (siehe oben). Er enthält nur dieses Konto — ohne Ämter, Gemeinden, Investitionen und ohne die Hilfe im Ausland."),
+            li("Nenner je Person im Bestand: ",
+               "Mittel aus dem Bestand am Ende des Vorjahres und am Ende des Berichtsjahres (Amt für Statistik 233.302, alle drei Status zusammen). "
+               "Das ist die sauberste verfügbare Näherung an die durchschnittliche Zahl betreuter Personen über das Jahr, weil die Ausgaben laufend anfallen. "
+               "Als zweite Linie ist der reine Jahresend-Bestand gezeigt. Die PX-Metadaten nennen den Stichtag nicht; der Wert für 2025 (939) entspricht "
+               "der Mitteilung der Regierung von Ende Dezember 2025 (938 Personen) und wird deshalb als Jahresendstand gelesen."),
+            li("Warum nur eine Näherung: ",
+               "Ausgaben fallen auch für Personen an, die im Laufe des Jahres kamen oder gingen und am Stichtag nicht im Bestand waren; "
+               "die Kosten enthalten ausserdem Teile (Verfahrens- und Verwaltungskosten, Rückkehrhilfe), die nicht je betreute Person entstehen. "
+               "Bei stark wachsendem oder sinkendem Bestand weichen die beiden Nenner deutlich ab (etwa 2022)."),
+            li("Sprung 2022: ",
+               "Ab 2022 ist der Status «Schutzbedürftige» im Bestand enthalten (2022: 399 von 448 Personen). Die Landesrechnung weist keine Aufteilung nach Status "
+               "oder Herkunft aus; deshalb gibt es die Kennzahl nur für den Gesamtbestand, nicht je Kategorie. Die Reihe vor und nach 2022 ist nicht direkt vergleichbar."),
+            li("Je Einwohner: ",
+               "Aufwand netto geteilt durch die ständige Wohnbevölkerung am Jahresende (Amt für Statistik 211.002). Damit ist «pro Kopf» der Gesamtbevölkerung gemeint, "
+               "nicht der Asylsuchenden. Keine Wertung: Die Zahlen beschreiben Ausgaben, nicht deren Angemessenheit."),
+        ], style={"color": MUTED, "fontSize": "0.8rem", "paddingLeft": "18px", "marginBottom": "0"}),
+    ]), html.Div(style={"height": "10px"})]
+    out.append(dbc.Row([
+        dbc.Col(_kpi("fa-user", f"Je Person im Bestand {last}", f"CHF {_chf(r['je_person_avg'])}", FL_RED,
+                     f"Mittelbestand {_chf(r['bestand_avg'])} Pers. · mit Jahresende-Bestand: CHF {_chf(r['je_person_end'])}"), md=6, sm=6, className="mb-3"),
+        dbc.Col(_kpi("fa-people-group", f"Je Einwohner {last}", f"CHF {_chf(r['je_einwohner'])}", FL_BLUE,
+                     f"Wohnbevölkerung {_chf(r['pop'])}"), md=6, sm=6, className="mb-3"),
+    ], className="g-3"))
+    f = go.Figure()
+    q = pc.dropna(subset=["je_person_avg"])
+    f.add_trace(go.Scatter(x=q.index, y=q["je_person_avg"], mode="lines+markers", name="Nenner: Mittel Vorjahr/Jahresende", line=dict(color=FL_RED, width=2.6),
+                           hovertemplate="%{x}: CHF %{y:,.0f} je Person<extra>Mittelbestand</extra>"))
+    f.add_trace(go.Scatter(x=q.index, y=q["je_person_end"], mode="lines+markers", name="Nenner: Bestand am Jahresende", line=dict(color=FL_GOLD, width=2, dash="dot"),
+                           hovertemplate="%{x}: CHF %{y:,.0f} je Person<extra>Jahresende</extra>"))
+    f.add_vline(x=2021.5, line_dash="dot", line_color=MUTED, annotation_text="ab 2022: Schutzbedürftige", annotation_font_color=MUTED, annotation_position="top left")
+    _styled(f, "Netto je Person im Bestand (CHF)")
+    f.update_layout(legend=dict(orientation="h", y=-0.28, bgcolor="rgba(0,0,0,0)"))
+    f.update_xaxes(tickformat="d", dtick=2)
+    f.update_yaxes(rangemode="tozero")
+    f2 = go.Figure(go.Bar(x=pc.index, y=pc["je_einwohner"], marker_color=FL_BLUE, hovertemplate="%{x}: CHF %{y:,.0f} je Einwohner<extra></extra>"))
+    _styled(f2, "Netto je Einwohner (CHF)", legend=False)
+    f2.update_xaxes(tickformat="d", dtick=2)
+    out.append(dbc.Row([dbc.Col(_card(_graph(f, 380)), md=6, className="mb-3"), dbc.Col(_card(_graph(f2, 380)), md=6, className="mb-3")], className="g-3"))
+    out.append(_source(("Aufwand: Landesrechnung Konto 590 (siehe Tabelle unten)", None),
+                       ("Bestand: Amt für Statistik 233.302, Bevölkerung: 211.002 (opendata.li), CC BY", URL["li"]),
+                       ("Eigene Berechnung (Division), Näherung", None)))
+    return out
+
+
 def section_asyl_costs():
     """Ausgaben des Landes für das Asylwesen (Landesrechnung, Konto 590) und Bestand der Schutz- und Asylsuchenden."""
     d = LR.table()
@@ -675,12 +732,10 @@ def section_asyl_costs():
             f2.update_xaxes(tickformat="d", dtick=2)
             g2 = _card(_graph(f2, 400))
     out.append(dbc.Row([dbc.Col(g1, md=7, className="mb-3"), dbc.Col(g2, md=5, className="mb-3")], className="g-3"))
-    out.append(_note("Warum keine Kosten je Gesuch oder je Person? Die Ausgaben fallen für den Bestand an Personen im Verfahren oder unter Schutz an "
-                     "(über mehrere Jahre), nicht je neues Gesuch; der Bestand ist ein Stichtagswert, die Ausgaben sind ein Jahreswert. "
-                     "Ein Quotient würde Genauigkeit vortäuschen und wird deshalb nicht gerechnet. Die Gesuchszahlen stehen oben in Abschnitt 3. "
-                     "Der Anstieg ab 2022 fällt zeitlich mit der Aufnahme von Schutzbedürftigen zusammen (Bestand 2021: "
-                     f"{_chf(s[(s['Jahr'] == 2021) & (s['Bewilligungstyp'] == 'Bewilligungstyp - Total')]['Wert'].sum()) if not st.empty else '–'} Personen); "
-                     "ein ursächlicher Anteil lässt sich aus den Konten nicht ablesen.", "fa-triangle-exclamation", FL_GOLD))
+    out.append(_note("Kosten je Gesuch werden nicht gerechnet: Die Ausgaben fallen für den Bestand an Personen im Verfahren oder unter Schutz an "
+                     "(über mehrere Jahre), nicht je neues Gesuch. Die Gesuchszahlen stehen oben in Abschnitt 3. Kennzahlen je Person im Bestand und "
+                     "je Einwohner folgen als Näherung.", "fa-circle-info", ACCENT))
+    out += _per_capita_block(d)
 
     # Tabelle mit Quellen je Jahr
     rows = []

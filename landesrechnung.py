@@ -101,3 +101,37 @@ def check(tol: float = 2.0) -> list[str]:
 
 def sources_table() -> pd.DataFrame:
     return pd.DataFrame([{"year": y, "Dokument": s[0], "url": s[1], "Seite": s[2], "Hinweis": s[3]} for y, s in sorted(SOURCES.items(), reverse=True)])
+
+
+def per_capita(bestand: pd.Series, pop: pd.Series) -> pd.DataFrame:
+    """Kennzahlen je Person aus Aufwand netto (Konto 590) und Bestandsreihe/Bevölkerung (beide Index Jahr, Stichtag 31.12.).
+
+    bestand_end  Bestand zum Jahresende t; bestand_avg  Mittel aus Bestand Jahresende t−1 und t (nur wenn beide vorhanden);
+    je_person_end / je_person_avg  Aufwand netto / Nenner (CHF); je_einwohner  Aufwand netto / Wohnbevölkerung Jahresende (CHF).
+    """
+    d = table()[["netto"]].copy()
+    b = bestand.astype(float)
+    d["bestand_end"] = b.reindex(d.index)
+    prev = b.copy()
+    prev.index = prev.index + 1                       # Wert des Vorjahres auf das Folgejahr legen
+    d["bestand_avg"] = ((b + prev.reindex(b.index)) / 2).reindex(d.index)
+    d["pop"] = pop.astype(float).reindex(d.index)
+    d["je_person_end"] = d["netto"] / d["bestand_end"]
+    d["je_person_avg"] = d["netto"] / d["bestand_avg"]
+    d["je_einwohner"] = d["netto"] / d["pop"]
+    return d
+
+
+def per_capita_live() -> pd.DataFrame:
+    """per_capita() mit Bestand (Amt für Statistik 233.302, Total aller Bewilligungstypen) und ständiger Wohnbevölkerung (211.002) aus der Datenbank."""
+    import db
+    from migration import pxs_id
+    st = db.get_px(pxs_id("li_asyl_stock"), max_age_hours=None)[0]
+    pp = db.get_px(pxs_id("li_pop_ctz"), max_age_hours=None)[0]
+    if st.empty or pp.empty:
+        return pd.DataFrame()
+    st = st[st["Bewilligungstyp"] == "Bewilligungstyp - Total"].dropna(subset=["Wert"])
+    pp = pp[pp["Staatsbürgerschaft"].astype(str).str.contains("Total")].dropna(subset=["Wert"])
+    b = pd.Series(st["Wert"].values, index=st["Jahr"].astype(int).values).sort_index()
+    p = pd.Series(pp["Wert"].values, index=pp["Jahr"].astype(int).values).sort_index()
+    return per_capita(b, p)

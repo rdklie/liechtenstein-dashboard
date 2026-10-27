@@ -258,6 +258,10 @@ def _build_catalog() -> dict[str, dict]:
         add(f"li{SEP}asyl_netto", "Liechtenstein (Landesrechnung)", "Asylwesen: Aufwand netto, Konto 590 (Mio. CHF)", lambda: LR.series("netto") / 1e6, "Mio. CHF")
         add(f"li{SEP}asyl_bestand", "Liechtenstein (Amt für Statistik)", "Bestand Asylbewerber, vorläufig Aufgenommene, Schutzbedürftige (Personen, total)",
             lambda: _year_series(_fl(_g(pxs_id("li_asyl_stock")), Bewilligungstyp="Bewilligungstyp - Total"), "Jahr"), "Personen")
+        for col, lab in (("je_person_avg", "Asylwesen: Aufwand netto je Person im Bestand (CHF, Mittelbestand Vorjahr/Jahresende; Näherung)"),
+                         ("je_person_end", "Asylwesen: Aufwand netto je Person im Bestand (CHF, Jahresend-Bestand; Näherung)"),
+                         ("je_einwohner", "Asylwesen: Aufwand netto je Einwohner (CHF)")):
+            add(f"li{SEP}asyl_{col}", "Liechtenstein (Landesrechnung)", lab, lambda col=col: LR.per_capita_live()[col].dropna(), "CHF")
     except Exception:
         pass
     for heimat, lab in (("Heimat - Total", "gesamt"), ("Liechtensteiner", "Liechtensteiner"), ("Ausländer", "Ausländer")):
