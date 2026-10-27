@@ -1,5 +1,6 @@
 #!/bin/bash
-# Einmalige Langzeitladung der ERA5-Klimadaten 1950-Vorjahr (11 Gemeinden, 176 Abrufe, mit Pause/Backoff bei HTTP 429).
+# NOTBEHELF: Die Langzeitladung der ERA5-Klimadaten (11 Gemeinden, 176 Abrufe) ist abgeschlossen; Fortsetzung und neue Jahre erledigt der taegliche Worker selbst.
+# Dieses Skript laedt fehlende Abschnitte geduldig (Pause/Backoff bei HTTP 429), falls man es von Hand beschleunigen will.
 # Setzt abgebrochene Läufe fort. Im Hintergrund starten:  setsid nohup ~/daten-li/bin/run-climate-import.sh >/dev/null 2>&1 &
 BASE="$HOME/daten-li"
 exec 9>"$BASE/climate.lock"

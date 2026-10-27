@@ -1,5 +1,6 @@
 #!/bin/bash
-# Einmaliger Import der Jahresberichte der Landespolizei Liechtenstein (2009-2025). Kein Cron!
+# Gesamtimport der Jahresberichte der Landespolizei Liechtenstein (Erstimport und Freigabe eines vom Worker zurueckgehaltenen Jahres). Kein Cron:
+# neue Berichte holt der Worker (police.auto_update) monatlich selbst und uebernimmt sie nur nach bestandener Pruefung.
 # Rohdateien: ~/daten-li/data/archive/police/ (vorhandene PDFs werden nicht erneut geladen)
 BASE="$HOME/daten-li"
 cd "$BASE/app" || exit 1

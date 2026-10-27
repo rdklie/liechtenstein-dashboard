@@ -2,7 +2,8 @@
 worker.py — Datenfetcher-Job für das Liechtenstein Dashboard
 =============================================================
 Läuft täglich als Cron Job (auf cyon: 06:00 UTC, siehe deploy/).
-Holt Daten von allen externen APIs und speichert sie in der SQLite-DB.
+Holt Daten von allen externen APIs und speichert sie in der SQLite-DB. Dazu die automatischen Nachführungen (Zustand in auto_status):
+Klimaarchiv (täglich bis vollständig, danach jährlich), Polizei-Jahresberichte (monatlich), Landesrechnung Konto 590 (jährlich ab März).
 
 Lokal ausführen:
     SQLITE_PATH=/pfad/zur/db.sqlite python worker.py
@@ -61,6 +62,8 @@ def run():
     for key, info in MUNICIPALITIES.items():
         for year in weather_years:
             try:
+                if len(db.read_weather_monthly(key, year)) >= 12:       # abgeschlossene Jahre ändern sich nicht: schont das Open-Meteo-Tageslimit
+                    continue
                 df = fetch_weather_monthly(year, lat=info["lat"], lon=info["lon"])
                 if not df.empty:
                     db.write_weather_monthly(df, key, year)
@@ -191,13 +194,30 @@ def run():
             errors.append(f"Explorer {label}: {e}")
 
     # ── Klimaarchiv (ERA5/Open-Meteo): fehlende Jahre in kleinen Schritten, bei 429 Abbruch bis zum nächsten Lauf ──
+    # Läuft selbständig bis zum Ende (bis zu 24 Abschnitte je Tag, bei 429/Tageslimit Abbruch, Fortsetzung am nächsten Tag) und ergänzt ab 15. Januar das neue Jahr.
     try:
         import climate
-        done, left = climate.load_missing(max_requests=3, pause=15)
-        log.info("--- Klimaarchiv: %d Abschnitte geladen, %d fehlen noch ---", done, left)
+        state = climate.auto_update(max_requests=24, pause=15)
+        log.info("--- Klimaarchiv: %s ---", state)
     except Exception as e:
         log.error("  ✗ Klimaarchiv — Fehler: %s", e)
         errors.append(f"Klimaarchiv: {e}")
+
+    # ── Polizei-Jahresberichte: monatlich auf neue PDFs prüfen; Übernahme nur nach bestandener Prüfung ──
+    try:
+        import police
+        log.info("--- Polizeistatistik: %s ---", police.auto_update())
+    except Exception as e:
+        log.error("  ✗ Polizeistatistik — Fehler: %s", e)
+        errors.append(f"Polizeistatistik: {e}")
+
+    # ── Landesrechnung Konto 590 (Asylwesen): ab 1. März auf den neuen Rechenschaftsbericht prüfen, Übernahme nur nach Summen-/Vorjahresprüfung ──
+    try:
+        import landesrechnung
+        log.info("--- Landesrechnung (Asylwesen): %s ---", landesrechnung.auto_update())
+    except Exception as e:
+        log.error("  ✗ Landesrechnung — Fehler: %s", e)
+        errors.append(f"Landesrechnung: {e}")
 
     # ── Projektionen (statsmodels, höchstens wöchentlich; Rückwärtstest + Intervalle) ──
     try:

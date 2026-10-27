@@ -599,3 +599,16 @@ hr.filter-hr {
 .area-exp { color: #F0883E; }
 .area-desc { color: #8B949E; font-size: 0.76rem; margin-top: 2px; }
 .exp-explain { margin-top: 12px; color: #8B949E; font-size: 0.8rem; border-top: 1px solid #30363D; padding-top: 10px; }
+
+/* ── Fusszeile (Datenquellen, Kontakt) ─────────────────────────── */
+.app-footer {
+  padding: 12px 20px;
+  font-size: 0.74rem;
+  color: #6E7681;
+  border-top: 1px solid #21262D;
+  background: rgba(0,0,0,0.15);
+  text-align: center;
+}
+.footer-link { color: #58A6FF; text-decoration: none; }
+.footer-link:hover { text-decoration: underline; }
+.footer-sep { color: #30363D; }

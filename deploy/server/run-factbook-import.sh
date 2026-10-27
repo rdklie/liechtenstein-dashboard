@@ -1,5 +1,5 @@
 #!/bin/bash
-# Einmaliger Import des CIA-World-Factbook-Archivs (Liechtenstein, 1990-2025). Kein Cron!
+# Einmaliger Import des CIA-World-Factbook-Archivs (Liechtenstein, 1990-2025). Kein Cron! Archiv ist abgeschlossen (Factbook eingestellt), nichts nachzufuehren.
 # Rohdateien: ~/daten-li/data/archive/factbook/ (bereits vorhandene Jahre werden nicht erneut geladen)
 BASE="$HOME/daten-li"
 cd "$BASE/app" || exit 1

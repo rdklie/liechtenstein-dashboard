@@ -12,13 +12,14 @@ Live unter <https://daten.li>.
 | `opendata.py` | Anbindung opendata.li: Katalog (EntryStore/DCAT) und PXWeb-API des Amts für Statistik |
 | `discover.py` | Wöchentlicher Discovery-Crawler: meldet neue/geänderte/entfernte Datensätze |
 | `tab_wohnen.py`, `tab_opendata.py` | Tabs «Wohnen & Immobilien» und «Open Data» (Explorer) |
-| `tab_factbook.py`, `factbook_import.py` | Tab «Factbook» (CIA World Factbook, Archiv 1990–2025) und der einmalige Import |
+| `tab_factbook.py`, `factbook_import.py` | Tab «Factbook» (CIA World Factbook, Archiv 1990–2025, abgeschlossen) und der einmalige Import |
+| `tab_quellen.py` | Seite «Datenquellen» (`?tab=quellen`, Link in der Fusszeile jeder Seite): Quellen je Bereich mit Herausgeber, Lizenz, Rhythmus, letztem Abruf; Zustand der Automatik |
 | `tab_imf.py`, `imf.py` | Tab «IWF» (World Economic Outlook, DataMapper API) |
 | `tab_migration.py`, `migration.py` | Tab «Migration»: Anteile, Liechtenstein im Detail, Wanderung/Einbürgerung/Asyl, Straffälligkeit |
 | `tab_police.py`, `police.py` | Tab «Polizeistatistik»: Jahresberichte der Landespolizei (Import/Parser) + Eurostat-Kriminalität nach Staatsangehörigkeit |
 | `tab_klima.py`, `climate.py` | Tab «Klimawandel»: ERA5-Langzeitreihen je Gemeinde (Open-Meteo-Archiv), Kennzahlen, Trends |
 | `tab_bildung.py`, `bildung.py` | Tab «Bildung»: Schulen, Lernende, Studierende, Staatsbürgerschaft der Schulkinder, Bildungsstand, Bildungsausgaben, PISA 2000–2012 |
-| `landesrechnung.py` | Ausgaben des Landes für das Asylwesen (Landesrechnung Konto 590, 2009–2025) mit Fundstellen; Tab «Migration» Abschnitt 5 |
+| `landesrechnung.py` | Ausgaben des Landes für das Asylwesen (Landesrechnung Konto 590, ab 2009) mit Fundstellen; Tab «Migration» Abschnitt 5; automatische Übernahme neuer Jahre |
 | `tab_lohn.py`, `lohn.py` | Tab «Lohn»: Lohnstatistik (Median, Quartile, Lohnunterschied, Branchen, Alter, Wohnsitz, Verteilung), Einordnung Schweiz (BFS) |
 | `tab_prognose.py`, `forecast.py` | Tab «Prognosen»: ETS/ARIMA/Theta/Drift mit Rückwärtstest (MASE), 80-/95-%-Bänder, Schwellenrechner, daneben Amt-Szenarien und IWF-Projektionen |
 | `tab_korrelation.py`, `correlate.py` | Tab «Korrelations-Labor»: Reihenkatalog (~120 Jahresreihen), Pearson/Spearman, Transformationen, Zeitverschiebung, Hypothesen-Galerie |
@@ -59,7 +60,7 @@ Statistik, abrufbar über die PXWeb-API `https://etab.llv.li/PXWeb/api/v1/de/eTa
 
 Das CIA World Factbook wurde am 4. Feb. 2026 eingestellt (cia.gov leitet nur noch auf eine Abschiedsseite). Der Tab «Factbook» zeigt Liechtenstein
 über alle 36 Ausgaben 1990–2025: Kennzahlen als Zeitreihen (nach Bezugsjahr oder nach Ausgabe) und eine Text-Chronik je Feld.
-`factbook_import.py` (einmalig, `deploy.ps1 -ImportFactbook`, kein Cron) lädt die SQL-Dumps des Archiv-Datenbestands
+`factbook_import.py` (einmalig, **abgeschlossen**, nichts nachzuführen; `deploy.ps1 -ImportFactbook`, kein Cron) lädt die SQL-Dumps des Archiv-Datenbestands
 [MilkMp/CIA-World-Factbooks-Archive-1990-2025](https://github.com/MilkMp/CIA-World-Factbooks-Archive-1990-2025) (MIT; die Daten sind gemeinfrei) von GitHub,
 filtert Liechtenstein (FIPS `ls`), legt die Rohdaten als `~/daten-li/data/archive/factbook/liechtenstein_<Jahr>.json` + `manifest.json` (URLs, SHA-256) ab
 und schreibt `factbook_fields` (Rohtext) und `factbook_values` (geparste Kennzahlen mit Ausgabe- und Bezugsjahr) nach SQLite.
@@ -99,9 +100,28 @@ Sachlich und quellenbasiert; zu jeder Kennzahl Definition, Quelle, Lizenz und St
 - **Nicht umgesetzt (Quelle fehlt/unzuverlässig):** Rücküberweisungen (Weltbank-Indikator ohne Liechtenstein), Armutsgefährdung nach Geburtsland (ohne Liechtenstein),
   Bildungsabschlüsse nach Herkunft (LI nur Volkszählung 2020, andere Länder nicht vergleichbar aufbereitet).
 
+## Automatische Nachführung (nichts von Hand)
+
+Der tägliche Worker (`worker.py`, Cron 06:00 UTC) führt alles nach; der Zustand steht in der Tabelle `auto_status` und auf der Seite «Datenquellen» (Fusszeile).
+
+| Was | Wann | Übernahme | Wenn die Prüfung nicht besteht |
+|---|---|---|---|
+| Weltbank, Eurostat, OSM, IWF, Amt für Statistik, BFS, Katalogdateien | täglich (Explorer-Cache höchstens 7 Tage, Lohn/Bildung/Migration wöchentlich) | sofort | alter Stand bleibt, Fehler im Log |
+| Klimaarchiv ERA5 (11 Gemeinden, 1950–) | täglich, bis zu 24 Abschnitte; bei HTTP 429/Tageslimit Abbruch, am nächsten Tag weiter; danach ab 15. Januar das neue Jahr (11 Abrufe) | sofort | – |
+| Polizei-Jahresberichte | monatlich (bei offener Prüfung wöchentlich), `police.auto_update()` | nur wenn alle Kernkennzahlen (`CORE_METRICS`) gefunden, ≥ 75 % der üblichen Kennzahlenzahl, keine Plausibilitäts-Markierung und kein Widerspruch zu den Vorjahreswerten | **nichts** wird in `police_metrics` geschrieben; `police_reports.error = «wartet auf Prüfung: …»`, sichtbar im Tab unter «Abdeckung», PDF bleibt im Archiv; Freigabe: `~/daten-li/bin/run-police-import.sh` (Gesamtimport, Markierungen sichtbar). Bestehende Jahre werden nie verändert |
+| Landesrechnung Konto 590 | täglich ab 1. März des Folgejahres (bei offener Prüfung wöchentlich), `landesrechnung.auto_update()`: Berichtsseite auf llv.li → PDF «IV. Landesrechnung» → Konto 590 samt Teilkonten | nur wenn Teilkonten = Total (±2 CHF), Vorjahresspalte = bereits geprüfte Vorjahreswerte, Berichtsjahr im Spaltenkopf stimmt und die gedruckte Seitenzahl lesbar ist; Ablage in `lr_asyl` mit Dokument/Seite/SHA-256 (die Konstante `ROWS` hat Vorrang und wird nie überschrieben) | Zeile mit `status = hold` (nicht veröffentlicht), Hinweis «Neues Jahr wartet auf Prüfung» im Tab «Migration» und auf «Datenquellen»; Freigabe nach Sichtprüfung: `python -c "import landesrechnung as L; L.approve(2026)"` |
+| Projektionen | wöchentlich | sofort | alter Stand |
+| opendata.li Discovery | sonntags 05:30 UTC | **nur Meldungen**, nichts wird automatisch veröffentlicht | – |
+| CIA World Factbook (Archiv) | **abgeschlossen** (Factbook eingestellt am 4. Feb. 2026) | – | – |
+
+Grenzen der Automatik (bleibt bewusst von Hand): die Investitionsrechnung der Landesrechnung (`INVEST`, Konto 590.503.00), neue Definitionshinweise (`DEF_NOTES`/Erklärkästen), neue
+Hypothesen der Galerie im Korrelations-Labor, Freigabe bei Prüfung «hold». Ändert die Regierung das Layout der Landesrechnung oder die Polizei den Berichtsaufbau, liest die Automatik
+nichts oder markiert es, sie schreibt nichts Falsches: dann den Parser (`landesrechnung.parse_konto590`, `police.parse_report`) anpassen. Die Abrufe nutzen einen ASCII-User-Agent
+(`llv.li` lehnt Header mit Umlauten ab), prüfen `robots.txt` und halten 2 s Pause.
+
 ## Polizeistatistik (Tab «Polizeistatistik»)
 
-- **Landespolizei Liechtenstein:** `police.py` (einmalig, `deploy.ps1 -ImportPolice`, kein Cron) lädt die 17 öffentlichen Jahresberichte 2009–2025 von
+- **Landespolizei Liechtenstein:** `police.py` (Erstimport `deploy.ps1 -ImportPolice`; neue Jahresberichte holt der Worker monatlich selbst, siehe «Automatische Nachführung») lädt die öffentlichen Jahresberichte ab 2009 (17 bis 2025) von
   [landespolizei.li/ueber-uns/jahresberichte](https://www.landespolizei.li/ueber-uns/jahresberichte) (robots.txt erlaubt es; 2 s Pause, ein Request je PDF),
   legt sie unter `~/daten-li/data/archive/police/` ab (+ `manifest.json` mit URL/SHA-256) und liest per `pypdf` Kennzahlen aus dem Text: Straftatbestände StGB,
   Aufklärungsrate, Tatverdächtige (gesamt, Anteil Liechtensteiner/Ausländer, minderjährig), Deliktsgruppen, Verkehrsunfälle/Verletzte/Tote, Untersuchungshaften
@@ -117,8 +137,9 @@ Sachlich und quellenbasiert; zu jeder Kennzahl Definition, Quelle, Lizenz und St
 ## Klimawandel je Gemeinde (Tab «Klimawandel»)
 
 - **Daten:** Open-Meteo Historical Weather API, Modell ERA5 (ECMWF/Copernicus; CC BY 4.0), tägliche Werte ab 1950 (Tmean/Tmax/Tmin, Niederschlag, Schneefall) für die
-  Koordinaten der 11 Gemeinden. `climate.py`: einmalige Ladung in 5-Jahres-Abschnitten (176 Abrufe, 20 s Pause, Backoff bei HTTP 429; Skript
-  `~/daten-li/bin/run-climate-import.sh`, setzt fort), danach ergänzt der tägliche Worker fehlende abgeschlossene Jahre (max. 3 Abrufe je Lauf, bei 429 Abbruch).
+  Koordinaten der 11 Gemeinden. `climate.py`: Ladung in 5-Jahres-Abschnitten (176 Abrufe; Erstladung am 27.10.2026 01:17 UTC abgeschlossen). Den Rest macht der tägliche Worker
+  selbst (`climate.auto_update`: bis 24 Abschnitte je Lauf, 15 s Pause, bei HTTP 429/Tageslimit Abbruch und Fortsetzung am nächsten Tag; ab 15. Januar das neue Jahr). Das Skript
+  `~/daten-li/bin/run-climate-import.sh` (wartet bei 429 geduldig) ist nur noch ein Notbehelf.
   Rohantworten: `~/daten-li/data/archive/climate/<gemeinde>_<von>-<bis>.json.gz`; Tageswerte komprimiert in `clim_daily`, Jahreskennzahlen in `clim_annual`.
 - **Auswertung:** Warming Stripes (Abweichung vom Mittel 1991–2020 je Gemeinde), Hitze-/Sommer-/Frost-/Eis-/Schneefall-/Starkregentage, Jahresniederschlag/-schnee,
   Trends nach Theil-Sen mit Mann-Kendall-Test (eigene numpy-Implementierung), Talgemeinden (< 600 m) vs. Berggemeinden (Triesenberg, Planken).
@@ -218,7 +239,7 @@ Aufbau auf dem Server (Account `rdkli@s033.cyon.net`, alles unter `~/daten-li/`,
 `.htaccess` (`RewriteRule … [P]`) darauf weiter. Stürzt der Prozess ab, startet ihn Cron innerhalb einer Minute neu.
 
 **Datenabruf:** Cron `0 6 * * *` mit `CRON_TZ=UTC` (06:00 UTC) ruft `run-worker.sh` → `worker.py`; sonntags 05:30 UTC läuft `run-discover.sh` → `discover.py`.
-Manuell: `ssh … '~/daten-li/bin/run-worker.sh'` (dauert ca. 3 Min., Log in `~/daten-li/logs/worker.log`).
+Manuell: `ssh … '~/daten-li/bin/run-worker.sh'` (dauert ca. 3 Min., Log in `~/daten-li/logs/worker.log`). Was der Worker nachführt und was nicht: Abschnitt «Automatische Nachführung».
 
 **Deploy** (PowerShell, SSH-Key `~\.ssh\bnutt_cyon_ed25519`):
 

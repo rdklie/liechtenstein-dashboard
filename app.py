@@ -42,6 +42,7 @@ import tab_korrelation
 import tab_prognose
 import tab_migration
 import tab_police
+import tab_quellen
 import tab_opendata
 import tab_wohnen
 from db import (
@@ -204,6 +205,7 @@ def _build_sidebar() -> html.Div:
                                 dcc.Tab(label="Bildung", value="bildung", className="stab", selected_className="stab-selected"),
                                 dcc.Tab(label="Lohn", value="lohn", className="stab", selected_className="stab-selected"),
                                 dcc.Tab(label="Polizeistatistik", value="polizei", className="stab", selected_className="stab-selected"),
+                                dcc.Tab(label="Datenquellen", value="quellen", className="stab", selected_className="stab-selected"),
                                 dcc.Tab(label="Politik ↗", value="politik", className="stab stab-politik", selected_className="stab-selected"),
                                 dcc.Tab(label="Klimawandel", value="klimawandel", className="stab stab-exp", selected_className="stab-selected stab-exp-selected"),
                                 dcc.Tab(label="Korrelations-Labor", value="korrelation", className="stab stab-exp", selected_className="stab-selected stab-exp-selected"),
@@ -359,6 +361,16 @@ app.layout = html.Div(
             ),
             fluid=True,
             className="main-container",
+        ),
+        html.Div(
+            [
+                html.A([html.I(className="fas fa-database", style={"marginRight": "6px"}), "Datenquellen"], href="/?tab=quellen", className="footer-link"),
+                html.Span(" · ", className="footer-sep"),
+                html.A("Kontakt", href="#", className="footer-link", **{"data-contact": "1"}),
+                html.Span(" · ", className="footer-sep"),
+                html.Span("Keine KI auf daten.li · Prognosen und Korrelationen sind Statistik, keine Vorhersagen · Unabhängiges Hobbyprojekt, keine offizielle Seite"),
+            ],
+            className="app-footer",
         ),
     ],
     className="app-wrapper",
@@ -525,6 +537,8 @@ def render_content(tab, year, indicators, weather_year, weather_vars, municipali
         return _with_exp_notice(tab_korrelation.render_korrelation(data))
     elif data["tab"] == "klimawandel":
         return _with_exp_notice(tab_klima.render_klima(data))
+    elif data["tab"] == "quellen":
+        return tab_quellen.render_quellen()
     elif data["tab"] == "polizei":
         return tab_police.render_police(data)
     elif data["tab"] == "migration":
@@ -603,7 +617,7 @@ AREAS = [
     ("Migration", "migration", "Anteile, Einbürgerung, Asyl, Zu- und Abwanderung, Kosten des Asylwesens", ""),
     ("Bildung", "bildung", "Schulen, Lernende, Studierende, Staatsbürgerschaft der Schulkinder, PISA 2000–2012", ""),
     ("Lohn", "lohn", "Medianlohn, Lohnunterschied Frauen/Männer, Branchen, Alter, Wohnsitz, Lohnverteilung, Vergleich Schweiz", ""),
-    ("Polizeistatistik", "polizei", "Jahresberichte der Landespolizei 2009–2025", ""),
+    ("Polizeistatistik", "polizei", "Jahresberichte der Landespolizei seit 2009", ""),
     ("Politik", "politik", "Externes Angebot faktencheck.li, öffnet in neuem Tab", "ext"),
     ("Klimawandel", "klimawandel", "ERA5-Langzeitreihen je Gemeinde, Trends, Warming Stripes", "exp"),
     ("Korrelations-Labor", "korrelation", "Zwei Reihen vergleichen: Korrelation, Zeitverschiebung", "exp"),
@@ -785,7 +799,7 @@ def _render_overview(data: dict):
             _source_info_row("fa-folder-open", "opendata.li (Amt für Statistik)", "https://www.opendata.li/de/daten",              "Wohnen, Mieten, Bautätigkeit und ca. 460 weitere Tabellen (CC BY)"),
         ], className="info-list"),
         html.Small(
-            "Alle Daten werden täglich automatisch aktualisiert. "
+            "Alle Daten werden automatisch aktualisiert (Details, Lizenzen und Abrufdaten: Fusszeile «Datenquellen»). "
             "Dieses Dashboard ist ein unabhängiges Freizeitprojekt ohne Verbindung zu offiziellen Stellen.",
             style={"color": MUTED, "display": "block", "marginTop": "10px", "lineHeight": "1.5"},
         ),

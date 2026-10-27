@@ -97,7 +97,7 @@ def render_factbook(data: dict) -> html.Div:
 
     notice = dbc.Alert([
         html.I(className="fas fa-box-archive", style={"marginRight": "8px"}),
-        html.B("Archiv – wird nicht mehr aktualisiert. "),
+        html.B("Archiv – abgeschlossen, wird nicht mehr aktualisiert (nichts nachzuführen). "),
         f"Das CIA World Factbook wurde am 4. Februar 2026 eingestellt; die letzte Ausgabe ist 2025 "
         f"({len(editions)} Ausgaben, {editions[0]}–{editions[-1]}). Werte stehen so, wie die CIA sie veröffentlicht hat: "
         "Bezugsjahre liegen oft Jahre vor der Ausgabe, und Definitionen wechseln (ab 2021 «Real GDP» in Preisen von 2015). "

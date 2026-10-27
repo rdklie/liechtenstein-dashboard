@@ -1,7 +1,7 @@
 """
 tab_police.py — Tab «Polizeistatistik»
 ======================================
-1. Landespolizei Liechtenstein: Kennzahlen aus den Jahresberichten 2009–2025 (einmaliger Import, police.py).
+1. Landespolizei Liechtenstein: Kennzahlen aus den Jahresberichten ab 2009 (Erstimport und monatliche Prüfung auf neue Berichte, police.py).
    Jeder Wert ist mit Berichtsjahr, Seite und Textausschnitt belegt; Definitionswechsel sind markiert.
 2. Eurostat crim_just_ctz (Verdächtige/Strafverfolgte/Verurteilte nach Staatsangehörigkeit, Ländervergleich) mit
    Raten je Gruppe und den methodischen Hinweisen (vorher im Tab «Migration»).
@@ -20,6 +20,15 @@ from tab_migration import (CRIME_CAVEATS, LI, LI_COLOR, DEFAULT_COUNTRIES, ES_LI
 from ui import FL_BLUE, FL_RED, FL_GOLD, ACCENT, GREEN, MUTED, TEXT, BORDER, _card, _kpi, _styled, _empty
 
 POLICE_URL = "https://www.landespolizei.li/ueber-uns/jahresberichte"
+
+
+def _span() -> str:
+    """«2009–2025» aus den tatsächlich gespeicherten Berichten (wächst mit der automatischen Nachführung)."""
+    r = read_police_reports()
+    if r.empty:
+        return "ab 2009"
+    r = r[r["error"].fillna("") == ""]
+    return f"{int(r['year'].min())}–{int(r['year'].max())}" if not r.empty else "ab 2009"
 COUNTRY_OPTS = [{"label": COUNTRY_NAMES[c], "value": c} for c in COUNTRY_NAMES if c not in ("USA", "CHN", "RUS")]
 
 METRIC_LABELS = {
@@ -198,12 +207,22 @@ def section_police():
             ok = (y, k) in have
             cells.append(html.Td("●" if ok else "–", style={"textAlign": "center", "color": GREEN if ok else BORDER}))
         rows.append(html.Tr([html.Td(METRIC_LABELS[k])] + cells))
-    miss = reports[reports["error"].fillna("") != ""] if not reports.empty else reports
+    err = reports["error"].fillna("") if not reports.empty else pd.Series(dtype=str)
+    wait = reports[err.str.startswith("wartet auf Prüfung")] if not reports.empty else reports
+    miss = reports[(err != "") & ~err.str.startswith("wartet auf Prüfung")] if not reports.empty else reports
+    ok_n = int((err == "").sum()) if not reports.empty else 0
+    hold = html.Div([html.I(className="fas fa-hourglass-half", style={"marginRight": "6px", "color": FL_GOLD}),
+                     html.B("Neues Jahr wartet auf Prüfung: ", style={"color": TEXT}),
+                     "; ".join(f"Bericht {int(r.year)} ist abgerufen, aber nicht veröffentlicht ({r.error.replace('wartet auf Prüfung: ', '')})" for r in wait.itertuples()),
+                     ". Die automatische Übernahme gibt ein neues Jahr nur frei, wenn alle Kernkennzahlen gefunden werden und keine Abweichung zum Vorjahr auftritt."],
+                    style={"color": MUTED, "fontSize": "0.8rem", "marginBottom": "8px", "padding": "8px 10px", "border": f"1px solid {FL_GOLD}", "borderRadius": "6px"}) \
+        if not wait.empty else None
     cov = _card([
         html.H6("Abdeckung: welche Kennzahlen in welchem Jahresbericht gefunden wurden", style={"color": TEXT}),
+        hold,
         html.P("● = Wert im Bericht eindeutig gelesen (mit Seite und Quelltext belegt); – = nicht gefunden/nicht maschinenlesbar (kein Schätzwert). "
-               + ("Fehlende Berichte: " + ", ".join(str(y) for y in miss["year"]) if not miss.empty else
-                  f"Berichte 2009–2025 vollständig abgerufen ({len(reports)} Dateien)."),
+               + ("Fehlende Berichte: " + ", ".join(str(y) for y in miss["year"]) + ". " if not miss.empty else "")
+               + f"Berichte {_span()} ({ok_n} Dateien) ausgewertet; die Seite der Landespolizei wird monatlich automatisch auf neue Jahresberichte geprüft.",
                style={"color": MUTED, "fontSize": "0.8rem"}),
         html.Div(html.Table([html.Thead(head), html.Tbody(rows)], className="od-table"), style={"overflowX": "auto"}),
     ])
@@ -222,7 +241,7 @@ def section_police():
                 style={"color": MUTED, "fontSize": "0.8rem", "paddingLeft": "18px", "marginBottom": "0"})])
     out.append(notes)
     st = reports["retrieved"].max() if not reports.empty else ""
-    out.append(_source(("Landespolizei Fürstentum Liechtenstein, Jahresberichte 2009–2025", POLICE_URL),
+    out.append(_source(("Landespolizei Fürstentum Liechtenstein, Jahresberichte {}".format(_span()), POLICE_URL),
                        ("öffentlich zugängliche amtliche Publikation, keine ausdrückliche Lizenz angegeben — hier nur Kennzahlen mit Quellen- und Seitenangabe", None),
                        (f"Abruf: {st}" if st else "Abruf unbekannt", None)))
     return out
@@ -336,7 +355,7 @@ def render_police(data: dict) -> html.Div:
         _card([html.P("Zahlen sind Gruppenstatistiken ohne Rückschluss auf Einzelne. Kriminalstatistiken zählen angezeigte bzw. ermittelte Personen, nicht begangene "
                       "Taten (Hellfeld); Kennzahlen unterschiedlicher Jahre und Länder sind nur bei gleicher Definition vergleichbar. "
                       "Quellenbasierte Auswertung, keine politische Einordnung.", style={"color": MUTED, "fontSize": "0.82rem", "marginBottom": "0"})]),
-        _section("1 · Landespolizei Liechtenstein: Jahresberichte 2009–2025",
+        _section(f"1 · Landespolizei Liechtenstein: Jahresberichte {_span()}",
                  "Kennzahlen aus den PDF-Berichten, jeweils mit Seite und Quelltext belegt; Definitionswechsel markiert, Lücken nicht geschätzt."),
         *section_police(),
         _section("2 · Eurostat: Verdächtige, Strafverfolgte und Verurteilte nach Staatsangehörigkeit",

@@ -19,7 +19,14 @@ Schul-, Gesundheits- und Sozialleistungen ausserhalb von Konto 590 sowie Ausgabe
 Migrationshilfe» (Konto 591.367.09, Hilfe im Ausland) steht separat und ist hier nicht enthalten.
 """
 
+import hashlib
+import logging
+import re
+from datetime import date, datetime
+
 import pandas as pd
+
+log = logging.getLogger("landesrechnung")
 
 BUA = "https://bua.regierung.li/bua/Services/pdf/bua{y}_{n:03d}.pdf?nr={n}&year={y}&a=1"
 LLV = "https://www.llv.li/serviceportal2/amtsstellen/stabstelle-regierungskanzlei/"
@@ -75,9 +82,46 @@ INVEST = {2023: 1179681, 2024: 0, 2025: 214151}
 INVEST_SRC = {2023: (SOURCES[2023][1], 565), 2024: (SOURCES[2024][1], 588), 2025: (SOURCES[2025][1], 570)}
 
 
+def _db_years() -> pd.DataFrame:
+    try:
+        import db
+        return db.read_lr_asyl()
+    except Exception:
+        return pd.DataFrame()
+
+
+def all_rows() -> dict:
+    """ROWS (von Hand geprüfte Konstante, hat immer Vorrang) plus die vom Worker gelesenen und geprüften neuen Jahre (lr_asyl, status ok)."""
+    out = {}
+    d = _db_years()
+    if not d.empty:
+        for r in d[d["status"] == "ok"].itertuples():
+            out[int(r.year)] = (r.betreuung, r.verfahren, r.rechtsberatung, r.sozialhilfe, r.aufwand, r.ertrag)
+    out.update(ROWS)
+    return dict(sorted(out.items()))
+
+
+def all_sources() -> dict:
+    """SOURCES plus die automatisch gelesenen Jahre: Rechnungsjahr → (Dokument, URL, Seite, Hinweis)."""
+    out = {}
+    d = _db_years()
+    if not d.empty:
+        for r in d[d["status"] == "ok"].itertuples():
+            out[int(r.year)] = (r.doc, r.url, int(r.page) if pd.notna(r.page) else None,
+                                f"automatisch gelesen am {r.retrieved}; Summenprüfung und Abgleich mit der Vorjahresspalte bestanden")
+    out.update(SOURCES)
+    return dict(sorted(out.items()))
+
+
+def pending() -> list[dict]:
+    """Jahre, die der Worker gelesen hat, die aber die Prüfung nicht bestanden haben (warten auf Sichtprüfung, nicht veröffentlicht)."""
+    d = _db_years()
+    return [] if d.empty else d[d["status"] == "hold"].to_dict("records")
+
+
 def table() -> pd.DataFrame:
     """Index Rechnungsjahr; Spalten COLS, aufwand (brutto), ertrag, netto (CHF)."""
-    d = pd.DataFrame({y: v for y, v in ROWS.items()}, index=COLS + ["aufwand", "ertrag"]).T.astype(float)
+    d = pd.DataFrame({y: v for y, v in all_rows().items()}, index=COLS + ["aufwand", "ertrag"]).T.astype(float)
     d["netto"] = d["aufwand"] - d["ertrag"]
     d.index.name = "year"
     return d.sort_index()
@@ -93,14 +137,14 @@ def series(kind: str = "netto") -> pd.Series:
 def check(tol: float = 2.0) -> list[str]:
     """Summe der Teilkonten gegen Aufwand Total laut Bericht; leer = in Ordnung."""
     bad = []
-    for y, v in ROWS.items():
+    for y, v in all_rows().items():
         if abs(sum(v[:4]) - v[4]) > tol:
             bad.append(f"{y}: Teilkonten {sum(v[:4]):,.2f} ≠ Total {v[4]:,.2f}")
     return bad
 
 
 def sources_table() -> pd.DataFrame:
-    return pd.DataFrame([{"year": y, "Dokument": s[0], "url": s[1], "Seite": s[2], "Hinweis": s[3]} for y, s in sorted(SOURCES.items(), reverse=True)])
+    return pd.DataFrame([{"year": y, "Dokument": s[0], "url": s[1], "Seite": s[2], "Hinweis": s[3]} for y, s in sorted(all_sources().items(), reverse=True)])
 
 
 def per_capita(bestand: pd.Series, pop: pd.Series) -> pd.DataFrame:
@@ -135,3 +179,215 @@ def per_capita_live() -> pd.DataFrame:
     b = pd.Series(st["Wert"].values, index=st["Jahr"].astype(int).values).sort_index()
     p = pd.Series(pp["Wert"].values, index=pp["Jahr"].astype(int).values).sort_index()
     return per_capita(b, p)
+
+
+# ── Automatische Nachführung (Worker, jährlich) ────────────────────────────────
+# Grenze der Automatik: Gelesen wird nur das bekannte Layout (Konten 590.318.01/.03/.04, 590.366.00, 590.436.00 mit je genau drei Zahlen
+# Rechnung/Voranschlag/Vorjahr). Übernommen wird ein Jahr nur, wenn (1) die Teilkonten das Total ergeben, (2) die Vorjahresspalte
+# des neuen Berichts mit unseren bereits geprüften Vorjahreswerten übereinstimmt und (3) das Berichtsjahr im Spaltenkopf stimmt.
+# Alles andere bleibt als «hold» in lr_asyl und erscheint im Tab als «wartet auf Prüfung» — nichts wird veröffentlicht.
+# Die Investitionsrechnung (590.503.00) wird nicht automatisch gelesen (INVEST bleibt von Hand).
+
+LISTING = "https://www.llv.li/de/landesverwaltung/stabsstelle-regierungskanzlei/rechenschaftsbericht/"
+LLV_BASE = "https://www.llv.li"
+HEADERS = {"User-Agent": "LiechtensteinDashboard/1.0 (https://daten.li; jaehrliche Pruefung auf neuen Rechenschaftsbericht)"}
+SUB_ROLES = {"590.318.01": 0, "590.318.03": 1, "590.318.04": 2, "590.366.00": 3, "590.436.00": "ertrag"}
+_NUM = r"-?\d{1,3}(?:'\d{3})+|-?\d+"
+
+
+def _amounts(txt: str) -> list[int]:
+    return [int(x.replace("'", "")) for x in re.findall(_NUM, txt)]
+
+
+def parse_konto590(pages: list[str], year: int) -> dict:
+    """
+    Konto 590 aus den Seitentexten des Berichts «IV. Landesrechnung» lesen.
+    → {"page": gedruckte Seite, "cur": (b, v, r, s, aufwand, ertrag), "prev": (… dasselbe, Vorjahresspalte), "pdf_page": Index}
+    Wirft ValueError mit lesbarer Begründung, wenn etwas nicht eindeutig ist.
+    """
+    hit = None
+    for i, t in enumerate(pages):
+        if "590.318.01" in t and "590.436.00" in t and re.search(r"590\s+Fl.chtlingswesen", t):
+            hit = (i, t)
+            break
+    if hit is None:
+        raise ValueError("Seite mit Konto 590 (Erfolgsrechnung) nicht gefunden")
+    i, t = hit
+    if f"Rechnung {year}" not in t or f"Rechnung {year - 1}" not in t:
+        raise ValueError(f"Spaltenkopf «Rechnung {year} … Rechnung {year - 1}» nicht gefunden")
+    m = re.search(r"^\s*(\d{3,4})\s*\|", t) or re.search(r"\|\s*(\d{3,4})\s*$", t.strip(), re.M)
+    page = int(m.group(1)) if m else None
+    lines = [ln.strip() for ln in t.replace("\r", "").split("\n")]
+    start = next((k for k, ln in enumerate(lines) if re.match(r"590\s+Fl.chtlingswesen\b", ln)), None)
+    if start is None:
+        raise ValueError("Kopfzeile «590 Flüchtlingswesen» nicht gefunden")
+    head = _amounts(re.sub(r"^590\s+Fl.chtlingswesen", "", lines[start]))
+    if len(head) != 6:
+        raise ValueError(f"Kopfzeile 590 hat {len(head)} statt 6 Zahlen")
+    cur, prev = [None] * 6, [None] * 6
+    cur[4], cur[5], prev[4], prev[5] = head[0], head[1], head[4], head[5]
+    seen = set()
+    for ln in lines[start + 1:]:
+        if re.match(r"591\b", ln):
+            break
+        mm = re.match(r"(590\.\d{3}\.\d{2})\b(.*)$", ln)
+        if not mm:
+            continue
+        code = mm.group(1)
+        if code not in SUB_ROLES:
+            raise ValueError(f"unbekanntes Teilkonto {code}")
+        nums = _amounts(re.sub(r"\.{2,}", " ", mm.group(2)))
+        if len(nums) != 3:
+            raise ValueError(f"{code}: {len(nums)} statt 3 Zahlen (Spalte leer oder Layout geändert)")
+        role = SUB_ROLES[code]
+        k = 5 if role == "ertrag" else role
+        cur[k], prev[k] = nums[0], nums[2]
+        seen.add(code)
+    if seen != set(SUB_ROLES):
+        raise ValueError("Teilkonten fehlen: " + ", ".join(sorted(set(SUB_ROLES) - seen)))
+    return {"page": page, "cur": tuple(cur), "prev": tuple(prev), "pdf_page": i + 1}
+
+
+def validate(parsed: dict, year: int, known: dict, tol: float = 2.0) -> list[str]:
+    """Prüfungen vor der Übernahme; leere Liste = bestanden."""
+    bad = []
+    cur, prev = parsed["cur"], parsed["prev"]
+    if abs(sum(cur[:4]) - cur[4]) > tol:
+        bad.append(f"Teilkonten {sum(cur[:4]):,} ≠ Total {cur[4]:,}")
+    if abs(sum(prev[:4]) - prev[4]) > tol:
+        bad.append(f"Vorjahresspalte: Teilkonten {sum(prev[:4]):,} ≠ Total {prev[4]:,}")
+    if (year - 1) not in known:
+        bad.append(f"kein geprüfter Vorjahreswert {year - 1} zum Abgleich")
+    else:
+        k = known[year - 1]
+        diffs = [f"{n}: Bericht {p:,} ≠ gespeichert {float(kv):,.0f}" for n, p, kv in zip(COLS + ["Aufwand", "Ertrag"], prev, k) if abs(p - float(kv)) > 1]
+        if diffs:
+            bad.append("Vorjahresspalte weicht von den gespeicherten Werten ab (Korrektur oder Layoutwechsel?): " + "; ".join(diffs))
+    if not parsed.get("page"):
+        bad.append("gedruckte Seitenzahl nicht lesbar")
+    if min(cur[:5]) < 0 or cur[4] > 100_000_000:
+        bad.append("Werte ausserhalb des plausiblen Bereichs")
+    return bad
+
+
+def _robots_allows(url: str) -> bool:
+    import requests
+    from urllib import robotparser
+    try:
+        r = requests.get(LLV_BASE + "/robots.txt", headers=HEADERS, timeout=30)
+        rp = robotparser.RobotFileParser()
+        rp.parse(r.text.splitlines())
+        return rp.can_fetch(HEADERS["User-Agent"], url)
+    except Exception:
+        return False                      # robots.txt nicht lesbar → vorsichtshalber nichts abrufen
+
+
+def find_pdf_urls(year: int) -> list[str]:
+    """PDF-Links mit «landesrechnung» auf der Berichtsseite des Rechnungsjahres (aktuelle Seite oder Archivseite)."""
+    import time
+    import requests
+    out = []
+    for slug in (f"rechenschaftsbericht-{year}", f"archiv-{year}"):
+        url = LISTING + slug
+        if not _robots_allows(url):
+            continue
+        time.sleep(2)
+        r = requests.get(url, headers=HEADERS, timeout=45)
+        if r.status_code != 200:
+            continue
+        for h in re.findall(r'href="([^"]*\.pdf[^"]*)"', r.text, re.I):
+            if "landesrechnung" in h.lower():
+                u = h if h.startswith("http") else LLV_BASE + h
+                if u not in out:
+                    out.append(u)
+        if out:
+            break
+    return out
+
+
+def pdf_pages(content: bytes) -> list[str]:
+    import io
+    import logging as _l
+    _l.getLogger("pypdf").setLevel(_l.ERROR)
+    import pypdf
+    return [(p.extract_text() or "") for p in pypdf.PdfReader(io.BytesIO(content)).pages]
+
+
+def auto_update(today: date | None = None, force: bool = False) -> str:
+    """
+    Jährliche Prüfung auf den neuen Rechenschaftsbericht (Teil IV Landesrechnung) und Übernahme von Konto 590.
+    Täglich vom Worker aufgerufen; ruft erst ab 1. März des Folgejahres die llv.li-Berichtsseite ab und prüft bei offener Prüfung nur wöchentlich.
+    → Zustand: ok | wartet | pruefung | fehler
+    """
+    import time
+    import requests
+    import db
+    today = today or date.today()
+    known = all_rows()
+    target = max(known) + 1
+    key = "landesrechnung"
+    if target > today.year - 1 or today < date(target + 1, 3, 1):
+        db.write_auto_status(key, "ok", f"Rechnungsjahr {max(known)} ist enthalten; der Bericht zu {target} erscheint üblicherweise im April/Mai {target + 1} "
+                                         f"(Prüfung ab 1. März {target + 1}).", ok=True)
+        return "ok"
+    st = db.read_auto_status()
+    prev = st[st["key"] == key]
+    if not force and not prev.empty and prev.iloc[0]["state"] == "pruefung" and prev.iloc[0]["last_check"]:
+        age = (datetime.utcnow() - datetime.strptime(prev.iloc[0]["last_check"], "%Y-%m-%d %H:%M")).days
+        if age < 7:
+            return "pruefung"
+    try:
+        urls = find_pdf_urls(target)
+        if not urls:
+            db.write_auto_status(key, "wartet", f"Bericht zum Rechnungsjahr {target} auf llv.li noch nicht gefunden.")
+            return "wartet"
+        errs = []
+        for url in urls:
+            if not _robots_allows(url):
+                errs.append(f"{url}: robots.txt untersagt den Abruf")
+                continue
+            time.sleep(2)
+            r = requests.get(url, headers=HEADERS, timeout=180)
+            r.raise_for_status()
+            if not r.content.startswith(b"%PDF"):
+                errs.append(f"{url}: keine PDF-Datei")
+                continue
+            sha = hashlib.sha256(r.content).hexdigest()
+            try:
+                parsed = parse_konto590(pdf_pages(r.content), target)
+            except ValueError as e:
+                errs.append(f"{url}: {e}")
+                continue
+            bad = validate(parsed, target, known)
+            c = parsed["cur"]
+            row = {"year": target, "betreuung": c[0], "verfahren": c[1], "rechtsberatung": c[2], "sozialhilfe": c[3], "aufwand": c[4], "ertrag": c[5],
+                   "doc": f"Rechenschaftsbericht {target}, IV. Landesrechnung", "url": url, "page": parsed["page"], "sha256": sha,
+                   "retrieved": today.isoformat()}
+            if bad:
+                db.write_lr_asyl({**row, "status": "hold", "note": "; ".join(bad)})
+                db.write_auto_status(key, "pruefung", f"Rechnungsjahr {target} gelesen, aber nicht übernommen: " + "; ".join(bad))
+                log.warning("Landesrechnung %d wartet auf Prüfung: %s", target, bad)
+                return "pruefung"
+            db.write_lr_asyl({**row, "status": "ok", "note": ""})
+            db.write_auto_status(key, "ok", f"Rechnungsjahr {target} übernommen (Seite {parsed['page']}, Summen- und Vorjahresprüfung bestanden).", ok=True)
+            log.info("Landesrechnung %d übernommen: Aufwand %s, Ertrag %s", target, c[4], c[5])
+            return "ok"
+        db.write_auto_status(key, "pruefung", f"Bericht zum Rechnungsjahr {target} gefunden, Konto 590 aber nicht lesbar: " + "; ".join(errs))
+        return "pruefung"
+    except Exception as e:
+        db.write_auto_status(key, "fehler", f"Abruf fehlgeschlagen: {str(e)[:300]}")
+        log.error("Landesrechnung: %s", e)
+        return "fehler"
+
+
+def approve(year: int) -> None:
+    """Von Hand nach Sichtprüfung: ein wartendes Jahr (status hold) freigeben. Aufruf: python -c "import landesrechnung as L; L.approve(2026)"."""
+    import db
+    d = db.read_lr_asyl()
+    r = d[(d["year"] == year) & (d["status"] == "hold")]
+    if r.empty:
+        raise SystemExit(f"Kein wartendes Jahr {year}")
+    row = r.iloc[0].to_dict()
+    row["status"], row["note"] = "ok", "von Hand nach Sichtprüfung freigegeben"
+    db.write_lr_asyl(row)
+    db.write_auto_status("landesrechnung", "ok", f"Rechnungsjahr {year} nach Sichtprüfung freigegeben.", ok=True)

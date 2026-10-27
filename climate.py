@@ -8,7 +8,8 @@ Quelle: Open-Meteo Historical Weather API (https://open-meteo.com/en/docs/histor
 Ablauf
   * Einmalige Ladung 1950–Vorjahr für alle 11 Gemeinden in 5-Jahres-Abschnitten (176 Abrufe), mit Pause und Backoff bei
     HTTP 429. Der Fortschritt steht in clim_daily (Gemeinde, Jahr): abgebrochene Läufe setzen dort fort.
-  * Jährlich ergänzt der tägliche Worker fehlende abgeschlossene Jahre (wenige Abrufe je Lauf).
+  * Der tägliche Worker setzt die Ladung selbständig fort (bis zu 24 Abschnitte je Lauf, bei HTTP 429 / Tageslimit Abbruch und Fortsetzung am nächsten
+    Tag) und ergänzt jährlich ab 15. Januar das neu abgeschlossene Jahr (11 Abrufe). Ein von Hand gestartetes run-climate-import.sh ist nicht nötig.
   * Rohantworten werden als <Datenordner>/archive/climate/<gemeinde>_<von>-<bis>.json.gz abgelegt.
   * Jahreskennzahlen (Hitzetage, Frosttage, …) und Trends (Theil-Sen, Mann-Kendall) werden aus den Tageswerten berechnet.
 
@@ -75,7 +76,10 @@ class RateLimited(Exception):
 
 
 def last_complete_year() -> int:
-    return date.today().year - 1
+    """Letztes abgeschlossene Jahr. Bis 15. Januar noch das Vorjahr davor: ERA5 liefert die letzten Tage eines Jahres erst mit einigen Tagen Verzug,
+    ein zu früh geladenes Jahr bliebe mit Lücken im Archiv stehen."""
+    t = date.today()
+    return t.year - 1 if t >= date(t.year, 1, 15) else t.year - 2
 
 
 # ── Abruf ─────────────────────────────────────────────────────────────────────
@@ -230,6 +234,25 @@ def trend(years: np.ndarray, values: np.ndarray) -> dict:
     b, a = theil_sen(x, y)
     _, p = mann_kendall(y)
     return {"n": int(len(x)), "slope_decade": b * 10, "p": p, "intercept": a}
+
+
+def auto_update(max_requests: int = 24, pause: float = 15.0) -> str:
+    """Vom Worker aufgerufen: fehlende Abschnitte laden (höchstens max_requests je Lauf) und den Zustand in auto_status festhalten. → ok | wartet | fehler"""
+    try:
+        todo_before = len(missing_chunks())
+        done, left = load_missing(max_requests=max_requests, pause=pause)
+        total = len(MUNICIPALITIES) * (last_complete_year() - START_YEAR + 1)
+        have = len(db.read_clim_years())
+        if left == 0:
+            db.write_auto_status("klima", "ok", f"Archiv vollständig: {have} Gemeinde-Jahre (1950–{last_complete_year()}, {len(MUNICIPALITIES)} Gemeinden). "
+                                                f"Neu abgeschlossenes Jahr wird ab 15. Januar ergänzt.", ok=True)
+            return "ok"
+        db.write_auto_status("klima", "wartet", f"{have} von {total} Gemeinde-Jahren geladen, {left} Abschnitte fehlen; heute {done} von {todo_before} geladen "
+                                                f"(Open-Meteo-Tageslimit/429 → Fortsetzung beim nächsten Lauf, 06:00 UTC).", ok=done > 0)
+        return "wartet"
+    except Exception as e:
+        db.write_auto_status("klima", "fehler", f"Klimaarchiv: {str(e)[:300]}")
+        raise
 
 
 def run(patient: bool = True, max_requests: int | None = None) -> int:

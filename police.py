@@ -364,6 +364,18 @@ TABLE_TO_METRIC = {"Wirtschaftsdelikte": "delikt_wirtschaft", "Vermögens- und E
                    "Migrationsdelikte": "delikt_migration", "Betäubungsmitteldelikte": "delikt_drogen"}
 
 
+def analyse_year(year: int, pdf: Path) -> tuple[dict[str, Hit], list[dict], int]:
+    """Ein Jahresbericht → (Kennzahlen, Tabellenzeilen der Deliktsgruppen, Seitenzahl); Tabellenzeilen füllen Lücken (v. a. 2024/2025)."""
+    pages = read_pages(pdf)
+    vals = parse_report(year, pages)
+    rows = parse_delikte(year, pages)
+    for r in rows:
+        key = TABLE_TO_METRIC.get(r["group"])
+        if key and key not in vals:
+            vals[key] = Hit([r["offences"], r["offences_prev"]], r["page"], r["text"])
+    return vals, rows, len(pages)
+
+
 def run(download: bool = True) -> int:
     """Download (nur fehlende), parsen, Querprüfung gegen Vorjahreswerte, in SQLite schreiben. → Exitcode"""
     import pandas as pd
@@ -377,21 +389,15 @@ def run(download: bool = True) -> int:
     vals_by_year: dict[int, dict[str, Hit]] = {}
     delikte, reports = [], []
     for year in sorted(paths):
-        pages = read_pages(paths[year])
-        vals = parse_report(year, pages)
-        rows = parse_delikte(year, pages)
-        for r in rows:                                     # Tabellenzeilen füllen Lücken (v. a. 2024/2025)
-            key = TABLE_TO_METRIC.get(r["group"])
-            if key and key not in vals:
-                vals[key] = Hit([r["offences"], r["offences_prev"]], r["page"], r["text"])
+        vals, rows, n_pages = analyse_year(year, paths[year])
         vals_by_year[year] = vals
         delikte += [{"year": year, "grp": r["group"], "page": r["page"], "offences": r["offences"],
                      "offences_prev": r["offences_prev"], "tv_total": r["tv_total"], "tv_under18": r["tv_under18"],
                      "tv_foreign": r["tv_foreign"], "source_text": r["text"]} for r in rows]
         m = manifest.get(paths[year].name, {})
         reports.append({"year": year, "file": paths[year].name, "url": m.get("url", ""), "sha256": m.get("sha256", ""),
-                        "bytes": paths[year].stat().st_size, "pages": len(pages), "retrieved": m.get("retrieved", ""), "error": ""})
-        log.info("%d: %d Kennzahlen, %d Tabellenzeilen, %d Seiten", year, len(vals), len(rows), len(pages))
+                        "bytes": paths[year].stat().st_size, "pages": n_pages, "retrieved": m.get("retrieved", ""), "error": ""})
+        log.info("%d: %d Kennzahlen, %d Tabellenzeilen, %d Seiten", year, len(vals), len(rows), n_pages)
     for y, e in errors.items():
         reports.append({"year": y, "file": "", "url": "", "sha256": "", "bytes": 0, "pages": 0, "retrieved": "", "error": e})
 
@@ -417,6 +423,133 @@ def run(download: bool = True) -> int:
     return 0 if not errors else 2
 
 
+# ── Automatische Nachführung (Worker, monatlich) ───────────────────────────────
+# Grenze der Automatik: Ein neuer Jahresbericht wird nur veröffentlicht, wenn alle «Kernkennzahlen» gefunden wurden, mindestens 75 % der
+# üblichen Kennzahlenzahl (Median der letzten drei Jahre) vorliegen und keine Plausibilitätsmarkierung (flag) und keine Abweichung zum
+# Vorjahreswert auftritt. Sonst wird NICHTS geschrieben ausser einer Zeile in police_reports («wartet auf Prüfung», sichtbar im Tab unter
+# «Abdeckung») und dem Status; die PDF-Datei bleibt im Archiv. Freigabe von Hand: ~/daten-li/bin/run-police-import.sh (Gesamtimport,
+# zeigt Markierungen im Tab). Bestehende Jahre werden nie verändert (db.add_police_year ersetzt nur das neue Jahr).
+
+CORE_METRICS = ("straftaten_stgb", "aufklaerungsquote_pct", "tatverdaechtige_stgb")
+CHECK_DAYS_OK = 28
+CHECK_DAYS_RETRY = 7
+
+
+def _robots_allows(url: str) -> bool:
+    from urllib import robotparser
+    try:
+        r = requests.get(BASE + "/robots.txt", headers=HEADERS, timeout=30)
+        rp = robotparser.RobotFileParser()
+        rp.parse(r.text.splitlines())
+        return rp.can_fetch(HEADERS["User-Agent"], url)
+    except Exception:
+        return False                      # robots.txt nicht lesbar → vorsichtshalber nichts abrufen
+
+
+def auto_update(force: bool = False) -> str:
+    """Prüft die Berichtsseite der Landespolizei auf neue Jahresberichte und übernimmt sie nur nach bestandener Prüfung. → ok | pruefung | fehler"""
+    import pandas as pd
+    key = "polizei"
+    st = db.read_auto_status()
+    prev = st[st["key"] == key]
+    if not force and not prev.empty and prev.iloc[0]["last_check"]:
+        age = (datetime.utcnow() - datetime.strptime(prev.iloc[0]["last_check"], "%Y-%m-%d %H:%M")).days
+        if age < (CHECK_DAYS_OK if prev.iloc[0]["state"] == "ok" else CHECK_DAYS_RETRY):
+            return str(prev.iloc[0]["state"])
+    try:
+        rep = db.read_police_reports()
+        m = db.read_police_metrics()
+        have = set(rep[rep["error"].fillna("") == ""]["year"].astype(int)) if not rep.empty else set()
+        if not m.empty:
+            have &= set(m["year"].astype(int))
+        if not _robots_allows(LIST_URL):
+            db.write_auto_status(key, "fehler", "robots.txt der Landespolizei untersagt den Abruf oder ist nicht lesbar — nichts abgerufen.")
+            return "fehler"
+        listed = list_reports()
+        if len(listed) < len(have):
+            db.write_auto_status(key, "fehler", f"Berichtsliste liefert nur {len(listed)} Berichte (gespeichert: {len(have)}) — Seitenaufbau geändert? Nichts übernommen.")
+            return "fehler"
+        new = sorted(y for y in listed if y not in have)
+        if not new:
+            db.write_auto_status(key, "ok", f"Keine neuen Jahresberichte (neuester gespeicherter: {max(have) if have else '–'}).", ok=True)
+            return "ok"
+        d = archive_dir()
+        manifest_path = d / "manifest.json"
+        manifest = json.loads(manifest_path.read_text("utf-8")) if manifest_path.exists() else {"files": {}, "source": SOURCE_NOTE}
+        notes, state = [], "ok"
+        for y in new:
+            pdf = d / f"jahresbericht_{y}.pdf"
+            if not pdf.exists():
+                if not _robots_allows(listed[y]):
+                    notes.append(f"{y}: robots.txt untersagt den Abruf")
+                    state = "pruefung"
+                    continue
+                time.sleep(PAUSE)
+                r = requests.get(listed[y], headers=HEADERS, timeout=120)
+                r.raise_for_status()
+                if not r.content.startswith(b"%PDF"):
+                    raise ValueError(f"{y}: keine PDF-Datei")
+                pdf.write_bytes(r.content)
+                manifest["files"][pdf.name] = {"url": listed[y], "sha256": hashlib.sha256(r.content).hexdigest(), "bytes": len(r.content),
+                                               "retrieved": datetime.utcnow().strftime("%Y-%m-%d")}
+                manifest_path.write_text(json.dumps(manifest, ensure_ascii=False, indent=1), "utf-8")
+            vals, drows, n_pages = analyse_year(y, pdf)
+            fl = checks(y, vals)
+            bad = [f"{k}: {v}" for k, v in fl.items()]
+            before = m[m["year"] == y - 1].set_index("metric")["value"].to_dict() if not m.empty else {}
+            for k, h in vals.items():
+                pv = h.value[1] if isinstance(h.value, list) and len(h.value) > 1 else None
+                if pv is not None and k in before and abs(before[k] - pv) > 0.5:
+                    bad.append(f"{k}: Vorjahreswert hier {pv:g}, gespeichert {before[k]:g}")
+            miss_core = [k for k in CORE_METRICS if k not in vals]
+            if miss_core:
+                bad.append("Kernkennzahlen nicht gefunden: " + ", ".join(miss_core))
+            counts = m.groupby("year").size().sort_index().tail(3) if not m.empty else pd.Series(dtype=int)
+            if len(counts) and len(vals) < 0.75 * float(counts.median()):
+                bad.append(f"nur {len(vals)} Kennzahlen gefunden (üblich ≈ {counts.median():.0f}) — Berichtsaufbau geändert?")
+            mf = manifest["files"].get(pdf.name, {})
+            report = {"year": y, "file": pdf.name, "url": mf.get("url", listed[y]), "sha256": mf.get("sha256", ""), "bytes": pdf.stat().st_size,
+                      "pages": n_pages, "retrieved": mf.get("retrieved", ""), "error": ""}
+            if bad:
+                report["error"] = "wartet auf Prüfung: " + "; ".join(bad)[:600]
+                _write_report_only(report)
+                notes.append(f"{y}: nicht übernommen — " + "; ".join(bad))
+                state = "pruefung"
+                log.warning("Polizei %d wartet auf Prüfung: %s", y, bad)
+                continue
+            metrics = [{"year": y, "metric": k, "value": float(h.value[0] if isinstance(h.value, list) else h.value),
+                        "prev": (h.value[1] if isinstance(h.value, list) and len(h.value) > 1 else None), "page": h.page,
+                        "source_text": h.text, "flag": ""} for k, h in vals.items()]
+            dl = pd.DataFrame([{"year": y, "grp": r["group"], "page": r["page"], "offences": r["offences"], "offences_prev": r["offences_prev"],
+                                "tv_total": r["tv_total"], "tv_under18": r["tv_under18"], "tv_foreign": r["tv_foreign"], "source_text": r["text"]}
+                               for r in drows])
+            db.add_police_year(pd.DataFrame(metrics), dl, pd.DataFrame([report]), y)
+            m = db.read_police_metrics()
+            notes.append(f"{y}: übernommen ({len(metrics)} Kennzahlen)")
+            log.info("Polizei %d übernommen: %d Kennzahlen", y, len(metrics))
+        db.write_auto_status(key, state, "; ".join(notes), ok=(state == "ok"))
+        return state
+    except Exception as e:
+        db.write_auto_status(key, "fehler", f"Abruf/Auswertung fehlgeschlagen: {str(e)[:300]}")
+        log.error("Polizei-Automatik: %s", e)
+        return "fehler"
+
+
+def _write_report_only(report: dict):
+    """Nur die Berichtszeile (mit Hinweis «wartet auf Prüfung») schreiben, keine Kennzahlen."""
+    import pandas as pd
+    engine = db._get_engine()
+    if engine is None:
+        return
+    from sqlalchemy import text
+    with engine.connect() as conn:
+        conn.execute(text("DELETE FROM police_reports WHERE year = :y"), {"y": int(report["year"])})
+        conn.commit()
+    pd.DataFrame([report]).to_sql("police_reports", engine, if_exists="append", index=False)
+
+
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s", handlers=[logging.StreamHandler(sys.stdout)])
+    if "--auto" in sys.argv:
+        sys.exit(0 if auto_update(force=True) == "ok" else 2)
     sys.exit(run(download="--no-download" not in sys.argv))

@@ -660,6 +660,9 @@ def section_asyl_costs():
     d = LR.table()
     last = int(d.index.max())
     out = []
+    for p in LR.pending():                                    # vom Worker gelesen, Prüfung nicht bestanden: nicht veröffentlicht
+        out.append(_note(f"Neues Jahr wartet auf Prüfung: Der Rechenschaftsbericht zum Rechnungsjahr {int(p['year'])} wurde automatisch gelesen, die Werte sind aber nicht "
+                         f"übernommen, weil die Prüfung nicht bestanden wurde ({p['note']}). Bis zur Sichtprüfung gelten die Zahlen bis {last}.", "fa-hourglass-half", FL_GOLD))
     # Abgrenzung
     out.append(_card([
         html.H6([html.I(className="fas fa-scale-balanced", style={"marginRight": "8px", "color": ACCENT}),
@@ -676,7 +679,8 @@ def section_asyl_costs():
                      "nicht die gesamten öffentlichen Kosten des Asylbereichs, sondern die Ausgaben auf diesem Konto."], style={"marginBottom": "4px"}),
             html.Li([html.B("Investitionen getrennt: ", style={"color": TEXT}),
                      "«Wohnraum für Schutzbedürftige» (Investitionsrechnung, Konto 590.503.00) steht nicht im Aufwand: "
-                     + ", ".join(f"{y}: CHF {_chf(v)}" for y, v in LR.INVEST.items()) + ". In den übrigen geprüften Jahren (2010–2022) gibt es dieses Konto nicht."],
+                     + ", ".join(f"{y}: CHF {_chf(v)}" for y, v in LR.INVEST.items()) + ". In den übrigen geprüften Jahren (2010–2022) gibt es dieses Konto nicht."
+                    + (" Die Investitionsrechnung wird bei neuen, automatisch gelesenen Jahren nicht mitgelesen." if last > max(LR.INVEST) else "")],
                     style={"marginBottom": "4px"}),
             html.Li([html.B("Seit 2022 mit Schutzbedürftigen: ", style={"color": TEXT}),
                      "Die Bestandszahlen zeigen ab 2022 zusätzlich den Status «Schutzbedürftige» (Amt für Statistik). Die Landesrechnung "
@@ -741,7 +745,7 @@ def section_asyl_costs():
     rows = []
     for y in sorted(d.index, reverse=True):
         v = d.loc[y]
-        src = LR.SOURCES[y]
+        src = LR.all_sources()[y]
         rows.append(html.Tr([html.Td(str(y)), html.Td(_chf(v["aufwand"])), html.Td(_chf(v["ertrag"]) if v["ertrag"] else "–"), html.Td(_chf(v["netto"])),
                              html.Td(_chf(v[LR.COLS[3]])), html.Td(_chf(v[LR.COLS[0]])),
                              html.Td(html.A(f"{src[0]}, S. {src[2]}", href=src[1], target="_blank", rel="noopener noreferrer", className="source-link")),
@@ -752,9 +756,9 @@ def section_asyl_costs():
                                                                        "Betreuung Aufnahmezentrum", "Fundstelle (Landesrechnung, Konto 590)", "Hinweis")])),
                              html.Tbody(rows)], className="od-table"), style={"maxHeight": "420px", "overflowY": "auto", "overflowX": "auto"}),
     ]))
-    out.append(_note("Seitenzahlen beziehen sich auf den Rechenschaftsbericht (Teil IV Landesrechnung, «Konten der Erfolgsrechnung»). Jede Zahl wurde mit der "
-                     "Vorjahresspalte des folgenden Berichts und mit der Summe der Teilkonten verglichen. Die Landesrechnung 2025 ist die jüngste verfügbare "
-                     f"(Rechnungsjahr {last}). Vor 2009 wurde nicht ausgewertet. Kontoname bis 2010: «Betreuung Flüchtlingszentrum», «Sozialhilfe für Flüchtlinge / Rückkehrhilfe».",
+    out.append(_note("Seitenzahlen beziehen sich auf den Rechenschaftsbericht (Teil IV Landesrechnung, «Konten der Erfolgsrechnung»). Die Jahre bis 2025 wurden von Hand mit der "
+                     "Vorjahresspalte des folgenden Berichts und mit der Summe der Teilkonten verglichen; neuere Jahre liest der Worker automatisch und übernimmt sie nur nach "
+                     f"bestandener Summen- und Vorjahresprüfung (jüngstes Rechnungsjahr: {last}). Vor 2009 wurde nicht ausgewertet. Kontoname bis 2010: «Betreuung Flüchtlingszentrum», «Sozialhilfe für Flüchtlinge / Rückkehrhilfe».",
                      "fa-file-pdf", MUTED))
     st_ts = _stand(pxs_id("li_asyl_stock"))
     out.append(_source(("Landesrechnung des Fürstentums Liechtenstein (Regierungskanzlei / Amt für Finanzen), Konto 590", "https://www.llv.li/de/landesverwaltung/amt-fuer-finanzen/wissenswertes/landesrechnung"),

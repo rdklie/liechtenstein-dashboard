@@ -25,6 +25,8 @@ Tabellen:
   clim_annual           — daraus berechnete Jahreskennzahlen (Hitzetage, Frosttage, …)
   fc_results            — Projektionen je Reihe (Rückwärtstest, Intervalle), vom Worker berechnet
   imf_data              — IWF DataMapper: Indikatoren für Liechtenstein (falls vorhanden)
+  lr_asyl               — Landesrechnung Konto 590: vom Worker automatisch gelesene neue Jahre (status ok | hold)
+  auto_status           — Zustand der automatischen Nachführungen (Polizei, Landesrechnung, Klima, …)
 """
 
 import base64
@@ -255,6 +257,31 @@ CREATE TABLE IF NOT EXISTS fc_results (
 CREATE TABLE IF NOT EXISTS imf_meta (
     indicator   TEXT PRIMARY KEY,
     source      TEXT
+);
+
+CREATE TABLE IF NOT EXISTS lr_asyl (
+    year        INTEGER PRIMARY KEY,
+    betreuung   FLOAT,
+    verfahren   FLOAT,
+    rechtsberatung FLOAT,
+    sozialhilfe FLOAT,
+    aufwand     FLOAT,
+    ertrag      FLOAT,
+    doc         TEXT,
+    url         TEXT,
+    page        INTEGER,
+    sha256      TEXT,
+    retrieved   TEXT,
+    status      TEXT,
+    note        TEXT
+);
+
+CREATE TABLE IF NOT EXISTS auto_status (
+    key         TEXT PRIMARY KEY,
+    state       TEXT,
+    message     TEXT,
+    last_check  TEXT,
+    last_ok     TEXT
 );
 
 CREATE TABLE IF NOT EXISTS od_discovery_log (
@@ -586,6 +613,55 @@ def write_police(metrics: pd.DataFrame, delikte: pd.DataFrame, reports: pd.DataF
         delikte.to_sql("police_delikte", engine, if_exists="append", index=False, method="multi", chunksize=200)
     if not reports.empty:
         reports.to_sql("police_reports", engine, if_exists="append", index=False, method="multi", chunksize=200)
+
+
+def add_police_year(metrics: pd.DataFrame, delikte: pd.DataFrame, reports: pd.DataFrame, year: int):
+    """Fügt ein einzelnes neues Berichtsjahr hinzu; bestehende Jahre bleiben unverändert (nur Zeilen dieses Jahres werden ersetzt)."""
+    engine = _get_engine()
+    if engine is None or metrics.empty:
+        return
+    with engine.connect() as conn:
+        for t in ("police_metrics", "police_delikte", "police_reports"):
+            conn.execute(text(f"DELETE FROM {t} WHERE year = :y"), {"y": int(year)})
+        conn.commit()
+    metrics.to_sql("police_metrics", engine, if_exists="append", index=False, method="multi", chunksize=200)
+    if not delikte.empty:
+        delikte.to_sql("police_delikte", engine, if_exists="append", index=False, method="multi", chunksize=200)
+    if not reports.empty:
+        reports.to_sql("police_reports", engine, if_exists="append", index=False, method="multi", chunksize=200)
+
+
+def write_auto_status(key: str, state: str, message: str = "", ok: bool = False):
+    """Zustand einer automatischen Nachführung festhalten. state: ok | wartet | pruefung | fehler; ok=True setzt zusätzlich last_ok."""
+    engine = _get_engine()
+    if engine is None:
+        return
+    now = datetime.utcnow().strftime("%Y-%m-%d %H:%M")
+    with engine.connect() as conn:
+        old = conn.execute(text("SELECT last_ok FROM auto_status WHERE key = :k"), {"k": key}).fetchone()
+        conn.execute(text("DELETE FROM auto_status WHERE key = :k"), {"k": key})
+        conn.execute(text("INSERT INTO auto_status (key, state, message, last_check, last_ok) VALUES (:k, :s, :m, :c, :o)"),
+                     {"k": key, "s": state, "m": message[:900], "c": now, "o": now if ok else (old[0] if old else None)})
+        conn.commit()
+
+
+def read_auto_status() -> pd.DataFrame:
+    return _read("SELECT key, state, message, last_check, last_ok FROM auto_status ORDER BY key")
+
+
+def read_lr_asyl() -> pd.DataFrame:
+    return _read("SELECT * FROM lr_asyl ORDER BY year")
+
+
+def write_lr_asyl(row: dict):
+    """Ein Rechnungsjahr der Landesrechnung (status ok | hold) schreiben; ersetzt nur dieses Jahr."""
+    engine = _get_engine()
+    if engine is None:
+        return
+    with engine.connect() as conn:
+        conn.execute(text("DELETE FROM lr_asyl WHERE year = :y"), {"y": int(row["year"])})
+        conn.commit()
+    pd.DataFrame([row]).to_sql("lr_asyl", engine, if_exists="append", index=False)
 
 
 def read_police_metrics() -> pd.DataFrame:
