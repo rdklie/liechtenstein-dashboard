@@ -174,6 +174,8 @@ def run():
     targets += migration.all_sources()                       # Eurostat, Weltbank, LI-PX für den Tab «Migration»
     import bildung
     targets += bildung.all_sources()                         # LI-PX und PISA für den Tab «Bildung»
+    import lohn
+    targets += lohn.all_sources()                            # LI-PX, BFS-LSE und Weltbank-VPI für den Tab «Lohn»
     if not cat.empty and "data_url" in cat.columns:
         for r in cat[cat["data_url"].fillna("") != ""].itertuples():
             targets.append((r.title, opendata.FILE_PREFIX + r.data_url))

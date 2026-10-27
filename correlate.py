@@ -336,6 +336,25 @@ def _build_catalog() -> dict[str, dict]:
                 add(f"pisa{SEP}LIE{SEP}{fach}", "PISA (OECD, nur Erhebungen 2000–2012)", f"PISA {fach}: Mittelwert Liechtenstein", lambda fach=fach: BI.pisa_series(fach), "Punkte")
     except Exception:
         pass
+    # Löhne (Amt für Statistik, Lohnstatistik; Erhebung alle 2 Jahre) und Schweizer Zentralwert (BFS)
+    try:
+        import lohn as LO
+        if not LO.median_series().empty:
+            G = "Löhne (Lohnstatistik, nur gerade Jahre 2006–2024)"
+            add(f"lohn{SEP}median", G, "Medianlohn Liechtenstein, Bruttomonatslohn (CHF)", lambda: LO.median_series(), "CHF")
+            add(f"lohn{SEP}median_f", G, "Medianlohn Frauen (CHF)", lambda: LO.median_series("Frauen"), "CHF")
+            add(f"lohn{SEP}median_m", G, "Medianlohn Männer (CHF)", lambda: LO.median_series("Männer"), "CHF")
+            add(f"lohn{SEP}gap", G, "Lohnunterschied Frauen/Männer, unbereinigt (% des Männerlohns)", lambda: LO.gap_series(), "%")
+            add(f"lohn{SEP}median_real", G, "Medianlohn real (Preise 2024, Näherung mit CH-Konsumentenpreisen; CHF)", lambda: LO.real_median(), "CHF")
+            add(f"lohn{SEP}zup", G, "Medianlohn Zupendler aus dem Ausland (CHF)",
+                lambda: LO.series(LO.sel(LO.tidy("wohnsitz"), Wohnsitz="Zupendler aus dem Ausland", Geschlecht="Geschlecht - Total", Kennzahl="Median")), "CHF")
+            add(f"lohn{SEP}li", G, "Medianlohn Liechtensteiner (CHF)",
+                lambda: LO.series(LO.sel(LO.tidy("staat"), **{"Staatsbürgerschaft": "Liechtensteiner", "Geschlecht": "Geschlecht - Total", "Kennzahl": "Median"})), "CHF")
+            add(f"lohn{SEP}ausl", G, "Medianlohn Ausländer (CHF)",
+                lambda: LO.series(LO.sel(LO.tidy("staat"), **{"Staatsbürgerschaft": "Ausländer", "Geschlecht": "Geschlecht - Total", "Kennzahl": "Median"})), "CHF")
+            add(f"lohn{SEP}ch", G, "Zentralwert Schweiz, Bruttomonatslohn (BFS Lohnstrukturerhebung, CHF; ab 2012)", lambda: LO.ch_median(), "CHF")
+    except Exception:
+        pass
     # Landespolizei
     pm = db.read_police_metrics()
     if not pm.empty:

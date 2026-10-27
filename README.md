@@ -19,6 +19,7 @@ Live unter <https://daten.li>.
 | `tab_klima.py`, `climate.py` | Tab «Klimawandel»: ERA5-Langzeitreihen je Gemeinde (Open-Meteo-Archiv), Kennzahlen, Trends |
 | `tab_bildung.py`, `bildung.py` | Tab «Bildung»: Schulen, Lernende, Studierende, Staatsbürgerschaft der Schulkinder, Bildungsstand, Bildungsausgaben, PISA 2000–2012 |
 | `landesrechnung.py` | Ausgaben des Landes für das Asylwesen (Landesrechnung Konto 590, 2009–2025) mit Fundstellen; Tab «Migration» Abschnitt 5 |
+| `tab_lohn.py`, `lohn.py` | Tab «Lohn»: Lohnstatistik (Median, Quartile, Lohnunterschied, Branchen, Alter, Wohnsitz, Verteilung), Einordnung Schweiz (BFS) |
 | `tab_prognose.py`, `forecast.py` | Tab «Prognosen»: ETS/ARIMA/Theta/Drift mit Rückwärtstest (MASE), 80-/95-%-Bänder, Schwellenrechner, daneben Amt-Szenarien und IWF-Projektionen |
 | `tab_korrelation.py`, `correlate.py` | Tab «Korrelations-Labor»: Reihenkatalog (~120 Jahresreihen), Pearson/Spearman, Transformationen, Zeitverschiebung, Hypothesen-Galerie |
 | `ui.py` | Gemeinsame Farben/Diagramm-Helfer |
@@ -172,6 +173,16 @@ Neues Rechnungsjahr: Zeile in `ROWS` und `SOURCES` ergänzen (Konto 590 im Kapit
 - Bewusst **keine** Kosten je Gesuch (Verfahren dauern mehrjährig; Aufwand folgt dem Bestand) und keine Aufteilung nach Herkunft (in der Landesrechnung nicht vorhanden).
 - Nicht enthalten: Personal-/Sachaufwand der Ämter, Leistungen ausserhalb Konto 590, Gemeinden, Hilfe im Ausland (Konto 591.367.09). Investitionsrechnung (590.503.00 «Wohnraum für Schutzbedürftige», 2023–2025) getrennt ausgewiesen.
 - Korrelations-Labor: Reihen `li|asyl_aufwand`, `li|asyl_netto`, `li|asyl_bestand`; zwei Hypothesen mit Warnhinweisen.
+
+## Lohn (Tab «Lohn»)
+
+`lohn.py` spiegelt (Worker, höchstens wöchentlich, Cache-Schlüssel `lohn:<Name>` in `px_cache`) und `tab_lohn.py` zeigt die **Lohnstatistik des Amts für Statistik** (PXWeb/opendata.li, CC BY):
+Tabellen 291.001 (nach Wirtschaftszweig, Wohnsitz, Voll-/Teilzeit, Geschlecht), 291.002 (Staatsbürgerschaft), 291.011 (Unternehmensgrösse), 291.022 (Alter), 291.031 (Aufenthaltsstatus),
+291.041 (Wohnort), 291.081 (Häufigkeitsverteilung); monatlicher Bruttolohn, Median und 1./3. Quartil, Berichtsjahre 2006–2024 alle zwei Jahre, auf Vollzeit (100 %) hochgerechnet.
+Dazu der Zentralwert der Schweiz (BFS Lohnstrukturerhebung, PXWeb-API `px-x-0304010000_201`) als Einordnung und der Schweizer Konsumentenpreisindex (Weltbank `FP.CPI.TOTL`) als Deflator für «reale Löhne» (Näherung).
+- **Lücken** (im Tab unter «Was nicht verfügbar ist»): keine Ausbildung/Anforderungsniveau/berufliche Stellung (Verwaltungsdaten), keine Stundenlöhne, kein Durchschnittslohn, kein bereinigter Lohnunterschied,
+  kein liechtensteinischer Preisindex, keine Zwischenjahre, kein EU-Vergleich.
+- Korrelations-Labor: Reihen `lohn|…` (Median gesamt/Frauen/Männer, Lohnunterschied, real, Zupendler, Liechtensteiner/Ausländer, Schweiz) und drei Hypothesen mit Warnhinweisen (nur gerade Jahre, n ≤ 10).
 
 ## Lokal starten
 

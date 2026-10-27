@@ -37,6 +37,7 @@ import tab_factbook
 import tab_imf
 import tab_bildung
 import tab_klima
+import tab_lohn
 import tab_korrelation
 import tab_prognose
 import tab_migration
@@ -141,7 +142,7 @@ HEADER = html.Div(
                     html.Div([
                         html.H1("Liechtenstein Dashboard", className="header-title"),
                         html.P([
-                            "Wirtschaft · Bevölkerung · Klima · Tourismus · Wohnen · Open Data · Factbook · IWF · Migration · Bildung · Polizeistatistik · ",
+                            "Wirtschaft · Bevölkerung · Klima · Tourismus · Wohnen · Open Data · Factbook · IWF · Migration · Bildung · Lohn · Polizeistatistik · ",
                             html.A("Politik ↗", href="https://faktencheck.li", target="_blank", rel="noopener noreferrer", className="header-ext-link"),
                             html.Span(" · Klimawandel · Korrelations-Labor · Prognosen (experimentell)", className="header-exp"),
                         ], className="header-sub"),
@@ -201,6 +202,7 @@ def _build_sidebar() -> html.Div:
                                 dcc.Tab(label="IWF",        value="imf",        className="stab", selected_className="stab-selected"),
                                 dcc.Tab(label="Migration",  value="migration",  className="stab", selected_className="stab-selected"),
                                 dcc.Tab(label="Bildung", value="bildung", className="stab", selected_className="stab-selected"),
+                                dcc.Tab(label="Lohn", value="lohn", className="stab", selected_className="stab-selected"),
                                 dcc.Tab(label="Polizeistatistik", value="polizei", className="stab", selected_className="stab-selected"),
                                 dcc.Tab(label="Politik ↗", value="politik", className="stab stab-politik", selected_className="stab-selected"),
                                 dcc.Tab(label="Klimawandel", value="klimawandel", className="stab stab-exp", selected_className="stab-selected stab-exp-selected"),
@@ -301,6 +303,7 @@ def _build_sidebar() -> html.Div:
                     tab_factbook.sidebar_section(),
                     tab_migration.sidebar_section(),
                     tab_bildung.sidebar_section(),
+                    tab_lohn.sidebar_section(),
                     tab_police.sidebar_section(),
                     tab_klima.sidebar_section(),
                     tab_korrelation.sidebar_section(),
@@ -473,6 +476,8 @@ def filters_to_url(tab, year, indicators, weather_year, weather_vars, municipali
     Input("bi-stage",              "value"),
     Input("bi-type",               "value"),
     Input("bi-countries",          "value"),
+    Input("lo-year",               "value"),
+    Input("lo-geschl",             "value"),
     Input("kl-muni",               "value"),
     Input("kl-index",              "value"),
     Input("kl-years",              "value"),
@@ -486,7 +491,7 @@ def filters_to_url(tab, year, indicators, weather_year, weather_vars, municipali
 )
 def render_content(tab, year, indicators, weather_year, weather_vars, municipality, tourism_year,
                    housing_muni, housing_rent, factbook_mode, mig_ind, mig_countries, mig_groups, mig_year,
-                   pol_countries, pol_stage, pol_year, bi_stage, bi_type, bi_countries, kl_muni, kl_index, kl_years,
+                   pol_countries, pol_stage, pol_year, bi_stage, bi_type, bi_countries, lo_year, lo_geschl, kl_muni, kl_index, kl_years,
                    kor_a, kor_b, kor_how, kor_lag, fc_series, fc_thr, fc_opts):
     data = {
         "tab":          tab          or "uebersicht",
@@ -503,12 +508,15 @@ def render_content(tab, year, indicators, weather_year, weather_vars, municipali
         "mig_year": mig_year,
         "pol_countries": pol_countries, "pol_stage": pol_stage, "pol_year": pol_year,
         "bi_stage": bi_stage, "bi_type": bi_type, "bi_countries": bi_countries,
+        "lo_year": lo_year, "lo_geschl": lo_geschl,
         "kl_muni": kl_muni, "kl_index": kl_index, "kl_years": kl_years,
         "kor_a": kor_a, "kor_b": kor_b, "kor_how": kor_how, "kor_lag": kor_lag,
         "fc_series": fc_series, "fc_thr": fc_thr, "fc_opts": fc_opts,
     }
     if data["tab"] == "bildung":
         return tab_bildung.render_bildung(data)
+    elif data["tab"] == "lohn":
+        return tab_lohn.render_lohn(data)
     elif data["tab"] == "politik":
         return _render_politik()
     elif data["tab"] == "prognose":
@@ -548,6 +556,7 @@ def render_content(tab, year, indicators, weather_year, weather_vars, municipali
     Output("filter-factbook", "style"),
     Output("filter-migration", "style"),
     Output("filter-bildung", "style"),
+    Output("filter-lohn", "style"),
     Output("filter-police", "style"),
     Output("filter-klima2", "style"),
     Output("filter-kor", "style"),
@@ -556,7 +565,7 @@ def render_content(tab, year, indicators, weather_year, weather_vars, municipali
 )
 def toggle_filters(tab):
     show, hide = {"display": "block"}, {"display": "none"}
-    order = ["wirtschaft", "tourismus", "klima", "wohnen", "factbook", "migration", "bildung", "polizei", "klimawandel", "korrelation", "prognose"]
+    order = ["wirtschaft", "tourismus", "klima", "wohnen", "factbook", "migration", "bildung", "lohn", "polizei", "klimawandel", "korrelation", "prognose"]
     return tuple(show if tab == t else hide for t in order)
 
 
@@ -593,6 +602,7 @@ AREAS = [
     ("IWF", "imf", "World Economic Outlook für Liechtenstein", ""),
     ("Migration", "migration", "Anteile, Einbürgerung, Asyl, Zu- und Abwanderung, Kosten des Asylwesens", ""),
     ("Bildung", "bildung", "Schulen, Lernende, Studierende, Staatsbürgerschaft der Schulkinder, PISA 2000–2012", ""),
+    ("Lohn", "lohn", "Medianlohn, Lohnunterschied Frauen/Männer, Branchen, Alter, Wohnsitz, Lohnverteilung, Vergleich Schweiz", ""),
     ("Polizeistatistik", "polizei", "Jahresberichte der Landespolizei 2009–2025", ""),
     ("Politik", "politik", "Externes Angebot faktencheck.li, öffnet in neuem Tab", "ext"),
     ("Klimawandel", "klimawandel", "ERA5-Langzeitreihen je Gemeinde, Trends, Warming Stripes", "exp"),

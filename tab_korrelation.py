@@ -64,6 +64,18 @@ HYPOTHESES = [
     ("edu|class_size", "edu|pupils", "level", 0, "Klassengrösse und Zahl der Schulkinder",
      "Mehr Schulkinder könnten zu grösseren Klassen führen.",
      "Beide Reihen enthalten einen Trend; Klassengrösse ist ein gerundeter Durchschnitt, Schulen steuern die Klassenbildung. Prüfen Sie die Zeilen «Veränderung» und «Trend entfernt»."),
+    ("lohn|median", "wb|NY.GDP.PCAP.CD", "level", 0, "Medianlohn und BIP pro Kopf",
+     "Wirtschaftsleistung und Löhne sollten sich langfristig gemeinsam entwickeln.",
+     "Nur 10 Erhebungsjahre (alle 2 Jahre), beide Reihen steigen im Trend: In Niveaus ist eine hohe Korrelation fast zwangsläufig. Das BIP pro Kopf in Liechtenstein wird stark von "
+     "Finanz- und Auslandsgeschäft bestimmt und umfasst nicht nur Löhne; der Wechselkurs (USD/CHF) wirkt zusätzlich. Veränderungen (Δ) beziehen sich bei Lohnreihen auf zwei Jahre."),
+    ("lohn|median", "li|zupendler", "level", 0, "Medianlohn und Zahl der Zupendler",
+     "Mehr Beschäftigte aus dem Ausland könnten den mittleren Lohn beeinflussen — oder umgekehrt höhere Löhne mehr Zupendler anziehen.",
+     "Beide Reihen wachsen im Trend; Medianlöhne hängen von Branchen- und Altersmix ab, nicht nur vom Wohnsitz. Nur gerade Jahre ab 2008 (n ≤ 9). Die Richtung der Wirkung "
+     "ist aus den Daten nicht ablesbar. Kein Urteil über Personengruppen."),
+    ("lohn|gap", "lohn|median_real", "level", 0, "Lohnunterschied Frauen/Männer und realer Medianlohn",
+     "Sinkt der unbereinigte Lohnunterschied, wenn die Löhne real steigen?",
+     "Nur 10 Punkte, beide Reihen laufen im Trend (Lohnunterschied fällt, Reallohn steigt): eine hohe negative Korrelation sagt noch nichts über einen Zusammenhang. Der reale Lohn nutzt "
+     "den Schweizer Konsumentenpreisindex als Näherung. Der Unterschied ist unbereinigt (Branche, Alter, Position, Arbeitszeit nicht herausgerechnet)."),
     ("li|asyl_bestand", "li|asyl_aufwand", "level", 0, "Bestand im Asylbereich und Aufwand des Landes (Konto 590)",
      "Die Ausgaben auf dem Asylkonto sollten dem Bestand der betreuten Personen folgen.",
      "Beide Reihen steigen seit 2022 stark (Aufnahme von Schutzbedürftigen); in Niveaus ergibt das fast zwangsläufig eine hohe Korrelation, die "
@@ -137,12 +149,12 @@ def how_to_read() -> html.Div:
         html.H6([html.I(className="fas fa-book-open", style={"marginRight": "8px", "color": ACCENT}), "Wie lesen? Grundlagen und Grenzen"], style={"color": TEXT}),
         html.Ul([
             item("Reihen", "Jahreswerte aus den bereits geladenen Daten (Amt für Statistik, Eurostat, Weltbank, IWF-Ist-Werte, CIA Factbook-Archiv, Landespolizei, "
-                 "ERA5-Klima, Bildung/Schulen, PISA 2000–2012, Landesrechnung: Asylwesen). Projektionen werden nie korreliert. Jede Reihe nennt ihre Quelle in der Auswahlliste."),
+                 "ERA5-Klima, Bildung/Schulen, PISA 2000–2012, Landesrechnung: Asylwesen, Lohnstatistik). Projektionen werden nie korreliert. Jede Reihe nennt ihre Quelle in der Auswahlliste."),
             item("Pearson / Spearman", "Pearson misst den linearen Zusammenhang der Werte, Spearman den Gleichlauf der Ränge (robuster gegen Ausreisser). "
                  "r liegt zwischen −1 und +1; p ist die Wahrscheinlichkeit, bei fehlendem Zusammenhang und unabhängigen Beobachtungen ein so grosses |r| zu sehen."),
             item("Konfidenzintervall", "95-%-Intervall für r (Fisher-z). Ein breites Intervall heisst: der wahre Zusammenhang ist kaum eingegrenzt."),
             item("Unabhängigkeit", "Jahreswerte benachbarter Jahre sind meist ähnlich (Autokorrelation); die p-Werte sind deshalb zu optimistisch, vor allem bei Trendreihen."),
-            item("Transformationen", "Niveau = Rohwerte; Δ und % = Veränderung zum Vorjahr; «Trend entfernt» = Abweichung von der linearen Trendgeraden. "
+            item("Transformationen", "Niveau = Rohwerte; Δ und % = Veränderung zum Vorjahr bzw. zum vorherigen Wert der Reihe (bei Lohnreihen: zwei Jahre); «Trend entfernt» = Abweichung von der linearen Trendgeraden. "
                  "Wenn die Korrelation der Niveaus verschwindet, sobald der Trend entfernt wird, war sie Scheinkorrelation."),
             item("Zeitverschiebung", "Prüft, ob eine Reihe der anderen um N Jahre vorausläuft. Je mehr Verschiebungen man testet, desto eher findet man zufällig eine «passende»."),
             item("Keine Kausalität", "Korrelation ist keine Kausalität. Ein Zusammenhang kann Zufall, gemeinsamer Trend, gemeinsame Ursache (z. B. Konjunktur) oder "
