@@ -265,6 +265,65 @@ def _build_catalog() -> dict[str, dict]:
                 return pd.Series(d["share"].values, index=d["year"].astype(int).values).sort_index()
             from migration import COUNTRY_NAMES
             add(f"es{SEP}{ind}_{iso}", "Eurostat Migration", f"{lab} — {COUNTRY_NAMES[iso]}", f, "%")
+    # Bildung (Amt für Statistik) und PISA (OECD via Weltbank EdStats): Reihen je Schuljahresende bzw. PISA-Erhebung
+    try:
+        import bildung as BI
+        if not BI.pupils_by_stage().empty:
+            G = "Bildung (Amt für Statistik)"
+            def _pup():
+                d = BI.pupils_by_stage()
+                d = d[(d["Typ"] == "Total") & (d["Stufe"] == "Schulstufe - Total")]
+                return pd.Series(d["Wert"].values, index=d["year"].values).sort_index()
+            add(f"edu{SEP}pupils", G, "Schulkinder total (Jahr des Schuljahresendes)", _pup, "Schulkinder")
+            add(f"edu{SEP}nonli_share", G, "Anteil Schulkinder ohne liechtensteinische Staatsbürgerschaft, alle Stufen (%)", lambda: BI.nonli_share(), "%")
+            add(f"edu{SEP}nonli_share_s1", G, "Anteil Schulkinder ohne liechtensteinische Staatsbürgerschaft, Sekundarstufe I (%)", lambda: BI.nonli_share_sek1(), "%")
+
+            def _cls():
+                d = BI.with_year(BI._g("classes"), "Jahr")
+                d = d[(d["Kennzahl"] == "Klassengrösse") & (d["Schulstufe"].map(BI.clean) == "Schulstufe - Total")]
+                return pd.Series(d["Wert"].values, index=d["year"].values).sort_index()
+            add(f"edu{SEP}class_size", G, "Durchschnittliche Klassengrösse, alle Stufen", _cls, "Schulkinder je Klasse")
+
+            def _staff():
+                d = BI.with_year(BI._g("staff"), "Schuljahr")
+                d = d[d["Personalkategorie"] == "Lehrpersonal (VZÄ)"]
+                return pd.Series(d["Wert"].values, index=d["year"].values).sort_index()
+            add(f"edu{SEP}teachers", G, "Lehrpersonal (VZÄ)", _staff, "VZÄ")
+
+            def _grads():
+                d = BI._g("grads")
+                d = d[d["Profil"].map(BI.clean).str.contains("Total")]
+                return pd.Series(d["Wert"].values, index=pd.to_numeric(d["Jahr"]).values).sort_index()
+            add(f"edu{SEP}grads", G, "Abschlüsse Sekundarstufe II total", _grads, "Abschlüsse")
+
+            def _app():
+                d = BI.with_year(BI._g("apprentices"), "Jahr")
+                d = d[d["Wohnland"] == "Wohnland - Total"]
+                return pd.Series(d["Wert"].values, index=d["year"].values).sort_index()
+            add(f"edu{SEP}apprentices", G, "Lernende in Liechtenstein (Berufliche Grundbildung)", _app, "Lernende")
+
+            def _stu():
+                d = BI.with_year(BI._g("students"), "Jahr")
+                d = d[d["Ausbildungsstätte"] == "Ausbildungsstätte - Total"]
+                return pd.Series(d["Wert"].values, index=d["year"].values).sort_index()
+            add(f"edu{SEP}students", G, "Studierende an Hochschulen in Liechtenstein", _stu, "Studierende")
+
+            def _spend(share):
+                def f():
+                    d = BI.spend()
+                    d = d.assign(F=d["Funktion"].str.strip(), y=pd.to_numeric(d["Jahr"], errors="coerce"))
+                    d = d[d["Teilsektor"].str.startswith("S.13 ")]
+                    e = d[d["F"].str.contains("Bildungswesen")].set_index("y")["Wert"]
+                    a = d[d["F"] == "Ausgaben"].set_index("y")["Wert"]
+                    return ((e / a * 100) if share else e).dropna().sort_index()
+                return f
+            add(f"edu{SEP}spend", G, "Staatsausgaben Bildungswesen (Mio. CHF)", _spend(False), "Mio. CHF")
+            add(f"edu{SEP}spend_share", G, "Anteil Bildungswesen an den Staatsausgaben (%)", _spend(True), "%")
+        if not BI.pisa().empty:
+            for fach in BI.PISA_INDICATORS.values():
+                add(f"pisa{SEP}LIE{SEP}{fach}", "PISA (OECD, nur Erhebungen 2000–2012)", f"PISA {fach}: Mittelwert Liechtenstein", lambda fach=fach: BI.pisa_series(fach), "Punkte")
+    except Exception:
+        pass
     # Landespolizei
     pm = db.read_police_metrics()
     if not pm.empty:

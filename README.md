@@ -17,6 +17,7 @@ Live unter <https://daten.li>.
 | `tab_migration.py`, `migration.py` | Tab «Migration»: Anteile, Liechtenstein im Detail, Wanderung/Einbürgerung/Asyl, Straffälligkeit |
 | `tab_police.py`, `police.py` | Tab «Polizeistatistik»: Jahresberichte der Landespolizei (Import/Parser) + Eurostat-Kriminalität nach Staatsangehörigkeit |
 | `tab_klima.py`, `climate.py` | Tab «Klimawandel»: ERA5-Langzeitreihen je Gemeinde (Open-Meteo-Archiv), Kennzahlen, Trends |
+| `tab_bildung.py`, `bildung.py` | Tab «Bildung»: Schulen, Lernende, Studierende, Staatsbürgerschaft der Schulkinder, Bildungsstand, Bildungsausgaben, PISA 2000–2012 |
 | `tab_prognose.py`, `forecast.py` | Tab «Prognosen»: ETS/ARIMA/Theta/Drift mit Rückwärtstest (MASE), 80-/95-%-Bänder, Schwellenrechner, daneben Amt-Szenarien und IWF-Projektionen |
 | `tab_korrelation.py`, `correlate.py` | Tab «Korrelations-Labor»: Reihenkatalog (~120 Jahresreihen), Pearson/Spearman, Transformationen, Zeitverschiebung, Hypothesen-Galerie |
 | `ui.py` | Gemeinsame Farben/Diagramm-Helfer |
@@ -143,6 +144,18 @@ Transparente Projektionen — «Projektion, keine Vorhersage». `forecast.py` re
 - **Schwellenrechner** («Wann erreicht Liechtenstein X Einwohner?») mit Jahr der zentralen Projektion und 80-%-Bereich (punktweise Wahrscheinlichkeit je Jahr).
 - **Getrennt daneben**: Bevölkerungsszenarien des Amts für Statistik (`pxs:li_scen`, 9 Szenarien bis 2060) und IWF-WEO-Projektionen; nie in die eigene Projektion eingerechnet.
 - Manuell neu rechnen: `python forecast.py` (im App-Verzeichnis, venv aktiv).
+
+## Bildung (Tab «Bildung»)
+
+`bildung.py` spiegelt (Worker, höchstens wöchentlich, Cache-Schlüssel `edu:<Name>` in `px_cache`) und `tab_bildung.py` zeigt:
+
+- **Amt für Statistik (PXWeb/opendata.li, CC BY):** Schulkinder nach Schultyp/Schulstufe (481.001), nach Staatsbürgerschaft (481.002), Klassengrösse (481.003), Abschlüsse Sekundarstufe II (481.101),
+  Schulpersonal in VZÄ (481.202), Studierende an Hochschulen in FL (482.007), Lernende (483.011), Bildungsstand der Bevölkerung (491.002d), Staatsausgaben für das Bildungswesen (COFOG 9, 501.031).
+- **PISA** (OECD, Mittelwerte Lesen/Mathematik/Naturwissenschaften) über die Weltbank-Datenbank EdStats (`LO.PISA.*`, API-Quelle 12, Stand 2024-06-25) für Liechtenstein, Schweiz, Österreich, Deutschland.
+  Liechtenstein hat nur 2000, 2003, 2006, 2009 und 2012 teilgenommen (OECD-Länderseite); seit 2015 nicht mehr.
+- **Lücken** (im Tab unter «Was nicht verfügbar ist» aufgeführt): kein PISA nach 2012, kein OECD-Durchschnitt je Erhebung (keine einheitliche maschinenlesbare Reihe), kein Migrationshintergrund
+  (nur Staatsbürgerschaft), keine Abschlussquote, keine Bildungsausgaben nach Stufe (Eurostat `educ_uoe_fine*` ist für LI leer).
+- Korrelations-Labor: Bildungsreihen (`edu|…`) und PISA (`pisa|LIE|…`) im Katalog; PISA gegen den Anteil Schulkinder ohne LI-Staatsbürgerschaft als Hypothese mit Warnhinweisen (nur 3 gemeinsame Jahre).
 
 ## Lokal starten
 

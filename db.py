@@ -445,6 +445,9 @@ def _live_fetch(path: str):
     if path.startswith(("es:", "wb:", "pxs:")):
         from migration import fetch_source
         return fetch_source(path)
+    if path.startswith("edu:"):
+        from bildung import fetch_source
+        return fetch_source(path)
     from opendata import px_fetch
     return px_fetch(path)
 

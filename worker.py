@@ -172,6 +172,8 @@ def run():
     targets = [(f"IWF {fid.split('/')[1]}", imf.SDMX_PREFIX + fid) for fid in imf.SDMX_FLOWS]
     import migration
     targets += migration.all_sources()                       # Eurostat, Weltbank, LI-PX für den Tab «Migration»
+    import bildung
+    targets += bildung.all_sources()                         # LI-PX und PISA für den Tab «Bildung»
     if not cat.empty and "data_url" in cat.columns:
         for r in cat[cat["data_url"].fillna("") != ""].itertuples():
             targets.append((r.title, opendata.FILE_PREFIX + r.data_url))

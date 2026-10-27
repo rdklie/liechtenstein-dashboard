@@ -46,6 +46,24 @@ HYPOTHESES = [
      "Beide wachsen seit Jahren.", "Genau das: Niveaus korrelieren fast perfekt, die Veränderungen aber kaum — Scheinkorrelation durch gemeinsamen Trend. Vergleichen Sie die Tabelle der Transformationen."),
     ("wb|NY.GDP.PCAP.CD", "li|auslaender_pct", "level", 0, "BIP pro Kopf und Ausländeranteil",
      "Wirtschaftsstarke Phasen ziehen Arbeitskräfte an.", "Beide steigen langfristig; Wechselkurs (USD) und Definition des Ausländeranteils beeinflussen die Reihen."),
+    ("pisa|LIE|Mathematik", "edu|nonli_share_s1", "level", 0, "PISA-Mathematik und Anteil Schulkinder ohne LI-Staatsbürgerschaft (Sekundarstufe I)",
+     "Es wird oft gefragt, ob sich die Zusammensetzung der Schülerschaft in den Testergebnissen niederschlägt.",
+     "Nur 3 gemeinsame Jahre (PISA 2006, 2009, 2012): keine belastbare Aussage. Staatsbürgerschaft ist nicht Migrationshintergrund (Eingebürgerte zählen als Liechtensteiner, ausländische "
+     "Staatsangehörige können hier geboren sein). PISA-Mittelwerte sind bei kleiner Stichprobe unsicher, und Schulsystem, Lehrpläne und Wirtschaftslage ändern sich gleichzeitig. Kein Urteil über Personengruppen."),
+    ("pisa|LIE|Lesen", "edu|nonli_share_s1", "level", 0, "PISA-Lesen und Anteil Schulkinder ohne LI-Staatsbürgerschaft (Sekundarstufe I)",
+     "Lesekompetenz hängt stark von der Unterrichtssprache ab; deshalb wird dieser Zusammenhang oft untersucht.",
+     "Nur 3 gemeinsame Jahre (2006, 2009, 2012). Ein ausländischer Pass sagt nichts über Familiensprache oder Herkunft der Eltern (nicht in den Daten). Korrelation ist keine Kausalität; "
+     "keine Aussage über Gruppen oder einzelne Schüler."),
+    ("pisa|LIE|Naturwissenschaften", "edu|nonli_share_s1", "level", 0, "PISA-Naturwissenschaften und Anteil Schulkinder ohne LI-Staatsbürgerschaft (Sekundarstufe I)",
+     "Ergänzung zu Lesen und Mathematik, damit nicht nur ein Fach betrachtet wird.",
+     "Nur 3 gemeinsame Jahre; mehrere Fächer zu testen erhöht die Gefahr eines Zufallstreffers. Staatsbürgerschaft ≠ Migrationshintergrund; Naturwissenschaften sind erst ab 2006 vergleichbar skaliert."),
+    ("pisa|LIE|Mathematik", "li|auslaender_pct", "level", 0, "PISA-Mathematik und Ausländeranteil der Wohnbevölkerung",
+     "Längere Reihe (5 PISA-Erhebungen 2000–2012) als beim Schulanteil.",
+     "Nur 5 Punkte; Mathematik 2000 ist mit späteren Erhebungen nicht vergleichbar (neues Rahmenkonzept 2003). Der Ausländeranteil der Bevölkerung wächst stetig, die PISA-Werte schwanken: "
+     "ein Trend-Effekt ist wahrscheinlicher als ein Zusammenhang. Kein Urteil über Gruppen."),
+    ("edu|class_size", "edu|pupils", "level", 0, "Klassengrösse und Zahl der Schulkinder",
+     "Mehr Schulkinder könnten zu grösseren Klassen führen.",
+     "Beide Reihen enthalten einen Trend; Klassengrösse ist ein gerundeter Durchschnitt, Schulen steuern die Klassenbildung. Prüfen Sie die Zeilen «Veränderung» und «Trend entfernt»."),
     ("li|asyl", "li|alq_Ausländer", "diff", 0, "Asylgesuche und Arbeitslosenquote der Ausländer",
      "Mehr Schutzsuchende könnten die Arbeitslosenquote der Ausländer erhöhen.", "Nur wenige Jahre, Asylzahlen springen (2015/2022); Arbeitslosenquote folgt der Konjunktur."),
 ]
@@ -110,7 +128,7 @@ def how_to_read() -> html.Div:
         html.H6([html.I(className="fas fa-book-open", style={"marginRight": "8px", "color": ACCENT}), "Wie lesen? Grundlagen und Grenzen"], style={"color": TEXT}),
         html.Ul([
             item("Reihen", "Jahreswerte aus den bereits geladenen Daten (Amt für Statistik, Eurostat, Weltbank, IWF-Ist-Werte, CIA Factbook-Archiv, Landespolizei, "
-                 "ERA5-Klima). Projektionen werden nie korreliert. Jede Reihe nennt ihre Quelle in der Auswahlliste."),
+                 "ERA5-Klima, Bildung/Schulen, PISA 2000–2012). Projektionen werden nie korreliert. Jede Reihe nennt ihre Quelle in der Auswahlliste."),
             item("Pearson / Spearman", "Pearson misst den linearen Zusammenhang der Werte, Spearman den Gleichlauf der Ränge (robuster gegen Ausreisser). "
                  "r liegt zwischen −1 und +1; p ist die Wahrscheinlichkeit, bei fehlendem Zusammenhang und unabhängigen Beobachtungen ein so grosses |r| zu sehen."),
             item("Konfidenzintervall", "95-%-Intervall für r (Fisher-z). Ein breites Intervall heisst: der wahre Zusammenhang ist kaum eingegrenzt."),
