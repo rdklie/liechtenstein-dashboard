@@ -58,6 +58,8 @@ Hinweise zum Werkzeug
 - Spalten, die du weder filterst noch gruppierst, setzt der Server auf die Summenzeile («… - Total»). Nenne Filterwerte möglichst genau wie im Katalog; sonst antwortet der Server mit den gültigen Werten.
 - Löhne: immer Kennzahl wählen (Median, 1. Quartil, 3. Quartil); Medianwerte werden nie addiert oder gemittelt.
 - Pro Kopf: Verhältnis (ratio) mit dem Datensatz bevoelkerung als b (Wohngemeinde Liechtenstein, join auf Jahr). Der Server rechnet Mio. CHF und CHF selbst um.
+- Fertig je Einwohner gerechnet gibt es: staat_ausgaben_je_einwohner (Staatsausgaben nach Funktion, z. B. Funktion «Soziale Sicherung» = Sozialleistungen/Sozialausgaben) und asyl_kosten_je_kopf (Asylaufwand, Kennzahl «Netto-Aufwand je Einwohner (Wohnbevölkerung Jahresende)»). Für eine Gegenüberstellung beider: zwei queries (group_by ["Jahr"], eigene label), keine derive, output beide ids, chart "line".
+- Halte die Abfrage knapp (nur nötige Felder, kurze ids und labels) und rufe das Werkzeug direkt auf, ohne lange Vorüberlegung.
 """
 
 TOOL = {
@@ -381,8 +383,12 @@ def _answer(cfg: B.Config, adm: B.Admission, q: str, frames, state: dict) -> dic
         content = [b for b in content if isinstance(b, dict)]
         text = "".join(str(b.get("text", "")) for b in content if b.get("type") == "text").strip()
         uses = [b for b in content if b.get("type") == "tool_use" and isinstance(b.get("id"), str)]
-        if resp.get("stop_reason") == "max_tokens" and uses:                        # Werkzeug-JSON abgeschnitten: nicht ausführen
-            if result is None:
+        if resp.get("stop_reason") == "max_tokens":
+            u = resp.get("usage") if isinstance(resp.get("usage"), dict) else {}
+            log.warning("Antwort bei max_tokens abgeschnitten: Blöcke=%s, Text=%d Zeichen, Output-Tokens=%s, Aufruf %d",
+                        [b.get("type") for b in content], len(text), u.get("output_tokens"), calls)
+        if resp.get("stop_reason") == "max_tokens" and (uses or result is None):    # Werkzeug-JSON abgeschnitten (nicht ausführen) oder das Denken hat alles verbraucht
+            if result is None:                                                      # nicht als «Themenfremd» ausgeben: es ist ein Fehler
                 return {"ok": False, "message": MSG_FAIL, "_outcome": "max_tokens"}
             uses = []
         if resp.get("stop_reason") == "tool_use" and uses and tool_runs < 2 and not final_round:

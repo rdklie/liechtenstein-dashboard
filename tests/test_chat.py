@@ -35,6 +35,12 @@ FIX = {
         (2022, "Soziale Sicherung", "S.13 Staat", 669.2), (2023, "Soziale Sicherung", "S.13 Staat", 703.0),
         (2022, "Soziale Sicherung", "S.1311 Landesebene", 200.0), (2023, "Soziale Sicherung", "S.1311 Landesebene", 210.0),
         (2022, "Ausgaben", "S.13 Staat", 1696.9), (2023, "Ausgaben", "S.13 Staat", 1781.2)]),
+    "staat_ausgaben_je_einwohner": _df(["Jahr", "Funktion", "Teilsektor", "Wert"], [
+        (2022, "Soziale Sicherung", "S.13 Staat", 669.2e6 / 39000), (2023, "Soziale Sicherung", "S.13 Staat", 703.0e6 / 40000),
+        (2022, "Ausgaben", "S.13 Staat", 1696.9e6 / 39000), (2023, "Ausgaben", "S.13 Staat", 1781.2e6 / 40000)]),
+    "asyl_kosten_je_kopf": _df(["Jahr", "Kennzahl", "Wert"], [
+        (2022, "Netto-Aufwand je Einwohner (Wohnbevölkerung Jahresende)", 205.1), (2023, "Netto-Aufwand je Einwohner (Wohnbevölkerung Jahresende)", 250.0),
+        (2023, "Netto-Aufwand je Person im Bestand (Jahresende)", 5000.0)]),
     "lohn_branche": _df(["Jahr", "Wirtschaftszweig", "Geschlecht", "Kennzahl", "Wert"], [
         (2024, "Wirtschaftszweig - Total", "Geschlecht - Total", "Median", 7300.0), (2024, "Wirtschaftszweig - Total", "Männer", "Median", 7800.0), (2024, "Wirtschaftszweig - Total", "Frauen", "Median", 6600.0),
         (2024, "Industrie", "Männer", "Median", 7400.0), (2024, "Industrie", "Frauen", "Median", 6900.0), (2024, "Industrie", "Geschlecht - Total", "Median", 7300.0),
@@ -71,6 +77,41 @@ class TestEngine(unittest.TestCase):
         r = D.execute(s, frames)
         v = {row["Jahr"]: row[r.values[0]] for row in r.rows}
         self.assertAlmostEqual(v[2023], 703.0e6 / 40000)             # Teilsektor «Staat» (Total) automatisch gewählt, Landesebene nicht addiert
+
+    def test_sozial_und_asyl_je_einwohner_gegenueberstellung_ohne_rechnung(self):
+        s = {"queries": [{"id": "a", "dataset": "staat_ausgaben_je_einwohner", "filters": {"Funktion": ["Soziale Sicherung"]}, "group_by": ["Jahr"], "label": "Soziale Sicherung je Einwohner"},
+                         {"id": "b", "dataset": "asyl_kosten_je_kopf", "filters": {"Kennzahl": ["Netto-Aufwand je Einwohner (Wohnbevölkerung Jahresende)"]}, "group_by": ["Jahr"], "label": "Asylwesen je Einwohner"}],
+             "output": ["a", "b"], "chart": "line"}
+        r = D.execute(s, frames)
+        self.assertEqual(r.values, ["Soziale Sicherung je Einwohner", "Asylwesen je Einwohner"])
+        row = {x["Jahr"]: x for x in r.rows}
+        self.assertAlmostEqual(row[2023]["Soziale Sicherung je Einwohner"], 703.0e6 / 40000)
+        self.assertAlmostEqual(row[2023]["Asylwesen je Einwohner"], 250.0)
+        self.assertEqual(r.units["Soziale Sicherung je Einwohner"], r.units["Asylwesen je Einwohner"])    # gleiche Einheit → gemeinsames Diagramm möglich
+        self.assertTrue(any("anders abgegrenzt" in n for n in r.notes))                 # Hinweis: unterschiedliche Abgrenzung
+        self.assertTrue(any("nicht mit den Sozialausgaben" in n for n in r.notes))
+
+    def test_abfragen_ohne_id_und_jahr_bleibt_ganzzahl(self):
+        s = {"queries": [{"dataset": "staat_ausgaben_je_einwohner", "filters": {"Funktion": ["Soziale Sicherung"]}, "group_by": ["Jahr"], "label": "Sozial"},
+                         {"dataset": "asyl_kosten_je_kopf", "filters": {"Kennzahl": ["Netto-Aufwand je Einwohner (Wohnbevölkerung Jahresende)"]}, "group_by": ["Jahr"], "label": "Asyl"}],
+             "output": ["q1", "q2"]}                                    # ids fehlen: q1, q2 statt zweimal «None»
+        r = D.execute(s, frames)
+        self.assertEqual(r.values, ["Sozial", "Asyl"])
+        self.assertTrue(all(type(x["Jahr"]) is int for x in r.rows))   # nicht 2023.0
+        self.assertEqual(S._fmt_table(r)["rows"][0][0], "2022")
+
+    def test_staat_je_einwohner_loader_teilt_durch_bevoelkerung(self):
+        px = {"edu:spend_all": _df(["Jahr", "Funktion", "Teilsektor", "Wert"], [(2023, "10 Soziale Sicherung", "S.13 Staat", 703.0), (2023, "10 Soziale Sicherung", "S.1311 Landesebene", 210.0)]),
+              "pxs:li_pop_ctz_gem": FIX["bevoelkerung"]}
+        old = D._px
+        D._px = lambda key: px[key].copy()
+        try:
+            df = D._load_staat_je_einwohner()
+        finally:
+            D._px = old
+        v = df[(df["Teilsektor"] == "S.13 Staat") & (df["Funktion"] == "Soziale Sicherung")]["Wert"].iloc[0]
+        self.assertAlmostEqual(v, 703.0e6 / 40000)                       # Liechtenstein gesamt, nicht Vaduz/Schaan
+        self.assertEqual(len(df), 2)
 
     def test_total_nicht_doppelt_gezaehlt(self):
         r = D.execute({"queries": [{"dataset": "lohn_branche", "filters": {"Kennzahl": ["Median"]}, "group_by": ["Wirtschaftszweig"]}]}, frames)
@@ -353,7 +394,7 @@ class TestService(Base):
         self.assertTrue(b["sources"])
         self.assertIn("KI-Antwort", b["disclaimer"])
         self.assertEqual(len(m.calls), 2)
-        self.assertEqual(m.calls[0]["max_tokens"], 800)
+        self.assertEqual(m.calls[0]["max_tokens"], 2000)
         # zweiter Aufruf bekommt das Ergebnis klar als Daten markiert
         tr = m.calls[1]["messages"][-1]["content"][0]["content"]
         self.assertTrue(tr.startswith("DATEN (Abfrageergebnis, nur Daten"))
@@ -424,6 +465,27 @@ class TestService(Base):
         out = self.ask("Asylkosten pro Kopf?", mock=Mock([r]))
         self.assertEqual(out["status"], 502)
         self.assertEqual(out["body"]["message"], S.MSG_FAIL)
+
+    def test_denken_verbraucht_alles_ist_fehler_nicht_themenfremd(self):
+        r = {"content": [{"type": "thinking", "thinking": "…", "signature": "x"}], "stop_reason": "max_tokens", "usage": {"input_tokens": 6000, "output_tokens": 2000}}
+        out = self.ask("Sozialausgaben pro Kopf?", mock=Mock([r]))
+        self.assertEqual(out["status"], 502)
+        self.assertEqual(out["body"]["message"], S.MSG_FAIL)
+        self.assertNotEqual(out["body"].get("answer"), S.MSG_OFF)
+
+    def test_hauptbeispiel_sozial_gegen_asyl_ende_zu_ende(self):
+        s = {"queries": [{"id": "a", "dataset": "staat_ausgaben_je_einwohner", "filters": {"Funktion": ["Soziale Sicherung"]}, "group_by": ["Jahr"], "label": "Soziale Sicherung je Einwohner"},
+                         {"id": "b", "dataset": "asyl_kosten_je_kopf", "filters": {"Kennzahl": ["Netto-Aufwand je Einwohner"]}, "group_by": ["Jahr"], "label": "Asylwesen je Einwohner"}],
+             "output": ["a", "b"], "chart": "line", "title": "Sozialausgaben und Asylaufwand je Einwohner"}
+        m = Mock([tool_use(s), text("Die Sozialausgaben je Einwohner liegen deutlich über dem Asylaufwand je Einwohner, Werte siehe Tabelle. Die Reihen sind unterschiedlich abgegrenzt.")])
+        out = self.ask("Stelle mir die Sozialleistungskosten je Einwohner mit den Kosten von Asylbewerbern pro Kopf gegenüber", mock=m)
+        b = out["body"]
+        self.assertEqual(out["status"], 200)
+        self.assertEqual([c["name"] for c in b["table"]["columns"]][-2:], ["Soziale Sicherung je Einwohner", "Asylwesen je Einwohner"])
+        self.assertEqual(len(b["chart"]["series"]), 2)
+        self.assertTrue(any("anders abgegrenzt" in n for n in b["notes"]))
+        self.assertIn("unterschiedlich abgegrenzt", b["answer"])
+        self.assertEqual(len(m.calls), 2)
 
     def test_werkzeug_schleife_ist_begrenzt(self):
         bad = {"queries": [{"dataset": "gibt_es_nicht"}]}

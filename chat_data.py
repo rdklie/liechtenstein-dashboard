@@ -185,6 +185,19 @@ def _load_staat_ausgaben() -> pd.DataFrame:
     return _tidy(df, ["Jahr", "Funktion", "Teilsektor"])
 
 
+def _load_staat_je_einwohner() -> pd.DataFrame:
+    """Ausgaben des Staates nach Funktion in CHF je Einwohner: Mio. CHF (Tabelle 501.031) geteilt durch die ständige Wohnbevölkerung am Jahresende (211.002)."""
+    ex = _load_staat_ausgaben()
+    pop = _px_loader("pxs:li_pop_ctz_gem", ["Jahr", "Staatsbürgerschaft", "Geschlecht", "Wohngemeinde"])()
+    pop = pop[(pop["Staatsbürgerschaft"] == "Staatsbürgerschaft - Total") & (pop["Geschlecht"] == "Geschlecht - Total") & (pop["Wohngemeinde"] == "Liechtenstein")]
+    m = ex.merge(pop[["Jahr", "Wert"]].rename(columns={"Wert": "Pop"}), on="Jahr", how="inner")
+    m = m[m["Pop"] > 0]
+    if m.empty:
+        raise LookupError("Bevölkerung fehlt")
+    m["Wert"] = m["Wert"] * 1e6 / m["Pop"]
+    return m[["Jahr", "Funktion", "Teilsektor", "Wert"]].reset_index(drop=True)
+
+
 def _build_registry() -> dict:
     ds = []
     add = ds.append
@@ -219,8 +232,9 @@ def _build_registry() -> dict:
     add(Dataset("asyl_kosten_je_kopf", "Netto-Aufwand Asylwesen je Einwohner und je Person im Bestand (Näherung)", "CHF",
                 "Landesrechnung Konto 590 und Amt für Statistik 233.302/211.002 (Berechnung des Dashboards)", "https://daten.li/?tab=migration",
                 _load_asyl_je_kopf, ["Jahr", "Kennzahl"], {}, additive=False, base_unit="CHF",
-                notes=["Näherung: Aufwand netto geteilt durch den Bestand zum Jahresende bzw. das Mittel aus zwei Jahresenden; kein Aufwand je einzelner Person."],
-                hint="bereits berechnete Kennzahlen je Kopf (Tab Migration)"))
+                notes=["Näherung: Aufwand netto geteilt durch den Bestand zum Jahresende bzw. das Mittel aus zwei Jahresenden; kein Aufwand je einzelner Person.",
+                       "Nur Konto 590 der Landesrechnung (Asylwesen); nicht mit den Sozialausgaben des Staates (u. a. AHV, IV, Krankenversicherung) vergleichbar: andere Abgrenzung."],
+                hint="bereits berechnete Kennzahlen je Kopf (Tab Migration); Kennzahl «Netto-Aufwand je Einwohner …» = Asylaufwand je Einwohner"))
     add(Dataset("asyl_bestand", "Bestand der Asylbewerber, vorläufig Aufgenommenen und Schutzbedürftigen (Jahresende)", "Personen",
                 "Amt für Statistik Liechtenstein, Tabelle 233.302", "https://www.statistikportal.li/",
                 _px_loader("pxs:li_asyl_stock", ["Jahr", "Staatsbürgerschaft", "Geschlecht", "Bewilligungstyp"]),
@@ -233,6 +247,13 @@ def _build_registry() -> dict:
                 notes=["«Soziale Sicherung» (COFOG 10) umfasst auch die Sozialversicherungen (AHV, IV, Krankenversicherung usw.) und ist anders abgegrenzt als der Aufwand für das Asylwesen.",
                        "Die Funktionen sind nicht überschneidungsfrei summierbar mit «Ausgaben» (Total)."],
                 hint="Funktion: Ausgaben (Total) | Soziale Sicherung | Bildungswesen | …; Teilsektor: Staat | Landesebene | Gemeindeebene | Sozialversicherungen"))
+    add(Dataset("staat_ausgaben_je_einwohner", "Ausgaben des Staates nach Funktion (COFOG) und Teilsektor, in CHF je Einwohner (Berechnung des Dashboards)", "CHF",
+                "Amt für Statistik Liechtenstein, Tabellen 501.031 und 211.002 (Berechnung des Dashboards)", "https://www.statistikportal.li/",
+                _load_staat_je_einwohner, ["Jahr", "Funktion", "Teilsektor"], {"Teilsektor": "S.13 Staat"}, additive=False, base_unit="CHF",
+                notes=["«Soziale Sicherung» (COFOG 10) umfasst auch die Sozialversicherungen (AHV, IV, Krankenversicherung usw.) und ist anders abgegrenzt als der Aufwand für das Asylwesen; "
+                       "die beiden Reihen sind nicht direkt vergleichbar.",
+                       "Je Einwohner = Ausgaben geteilt durch die ständige Wohnbevölkerung am Jahresende."],
+                hint="fertig je Einwohner berechnet; Funktion: Ausgaben (Total) | Soziale Sicherung | Bildungswesen | …; Teilsektor: Staat | Landesebene | Gemeindeebene | Sozialversicherungen"))
     add(Dataset("polizei_kennzahlen", "Kennzahlen der Landespolizei aus den Jahresberichten", "gemäss Kennzahl",
                 "Landespolizei Liechtenstein, Jahresberichte (PDF)", "https://www.landespolizei.li/", _load_police, ["Jahr", "Kennzahl"], {}, additive=False,
                 notes=["Einheit je Kennzahl gemäss Bericht (Fälle, Prozent, Personen); Berichtsjahre vor 2009 fehlen."]))
@@ -344,6 +365,19 @@ def norm(s) -> str:
 
 
 _SAFE = re.compile(r"[^\w .,()%/:+\-·–]")
+
+
+def _default_label(d: Dataset, q: dict) -> str:
+    """Ohne label des Modells: Titel des Datensatzes plus die einzeln gefilterten Werte (ausser Jahr), damit «Ausgaben des Staates» nicht wie das Total aussieht."""
+    base = re.split(r" nach | \(|, ", d.title)[0]
+    fl = q.get("filters") if isinstance(q.get("filters"), dict) else {}
+    extra = [str(v[0]) for k, v in fl.items() if k != "Jahr" and isinstance(v, list) and len(v) == 1 and isinstance(v[0], (str, int, float))]
+    return f"{base}: {', '.join(extra)}" if extra else base
+
+
+def _ident(v) -> str:
+    """id aus der Modell-Eingabe; fehlt sie (None), wird sie nicht zu «None», sondern leer (der Aufrufer vergibt dann q1, q2 …)."""
+    return "" if v is None else safe_text(v, 12)
 
 
 def safe_text(s, n: int = 70) -> str:
@@ -569,12 +603,12 @@ def execute(spec: dict, frames: Callable = get_frame) -> Result:
     series: dict = {}
     sources, notes, formulas = [], [], []
     for i, q in enumerate(queries):
-        qid = (safe_text(q.get("id"), 12) or f"q{i + 1}") if isinstance(q, dict) else f"q{i + 1}"
+        qid = (_ident(q.get("id")) or f"q{i + 1}") if isinstance(q, dict) else f"q{i + 1}"
         if qid in series:
             raise QueryError(f"doppelte id {qid}")
         df = run_query(q, frames)
         d = registry()[q["dataset"]]
-        label = safe_text(q.get("label") or re.split(r" nach | \(|, ", d.title)[0])
+        label = safe_text(q.get("label") or _default_label(d, q))
         series[qid] = Series(df, d.unit, label, d.key, d.scale, d.base_unit)
         if (d.source, d.source_url) not in sources:
             sources.append((d.source, d.source_url))
@@ -589,7 +623,7 @@ def execute(spec: dict, frames: Callable = get_frame) -> Result:
     for j, dv in enumerate(der):
         if not isinstance(dv, dict):
             raise QueryError("derive-Eintrag muss ein Objekt sein")
-        did = safe_text(dv.get("id"), 12) or f"d{j + 1}"
+        did = _ident(dv.get("id")) or f"d{j + 1}"
         if did in series:
             raise QueryError(f"doppelte id {did}")
         a = series.get(dv.get("a"))
@@ -626,7 +660,7 @@ def execute(spec: dict, frames: Callable = get_frame) -> Result:
         raise QueryError("zu viele Ergebniszeilen")
     units = {n: o.unit for n, o in zip(names, outs)}
     rows = []
-    for _, r in merged.iterrows():
+    for r in merged.to_dict(orient="records"):                                      # to_dict statt iterrows: «Jahr» bleibt ganze Zahl (iterrows macht daraus 2024.0)
         row = {}
         for c in merged.columns:
             v = r[c]

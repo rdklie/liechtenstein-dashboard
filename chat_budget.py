@@ -164,7 +164,7 @@ def load_config() -> Config:
         ip_day_budget_urp=int(max(0.0, min(_num("AI_CHAT_IP_DAY_BUDGET_RP", MAX_IP_DAY_RP), MAX_IP_DAY_RP)) * URP),
         price_in_urp=max(_num("AI_CHAT_PRICE_IN_URP", table[0]), table[0]),
         price_out_urp=max(_num("AI_CHAT_PRICE_OUT_URP", table[1]), table[1]),
-        max_tokens=int(min(max(_num("AI_CHAT_MAX_TOKENS", 800), 100), 2000)),    # inkl. Denkanteil (Haiku 5.5 denkt standardmässig adaptiv) und Werkzeug-JSON
+        max_tokens=int(min(max(_num("AI_CHAT_MAX_TOKENS", 2000), 100), 4000)),   # inkl. Denkanteil (Haiku 5.5 denkt standardmässig adaptiv und zählt dagegen) und Werkzeug-JSON; 800 reichte live nicht
         max_input_chars=int(min(max(_num("AI_CHAT_MAX_INPUT_CHARS", 500), 20), 1000)),
         history=int(min(max(_num("AI_CHAT_HISTORY", 2), 0), 4)),
         questions_per_session=int(_num("AI_CHAT_Q_PER_SESSION", 15)),

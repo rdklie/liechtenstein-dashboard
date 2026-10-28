@@ -233,7 +233,7 @@ schreibgeschützte Verbindung, höchstens 200 Ergebniszeilen), (2) Budgets, (3) 
 | Sitzungsbudget (signiertes Cookie, serverseitig gezählt) | 20 Rappen, 15 Fragen | `AI_CHAT_SESSION_BUDGET_RP`, `AI_CHAT_Q_PER_SESSION` |
 | Tagesbudget je IP-Hash (Cookie löschen umgeht nichts), neue Sitzungen je IP/Tag | 30 Rappen, 5 Sitzungen | `AI_CHAT_IP_DAY_BUDGET_RP`, `AI_CHAT_SESSIONS_PER_IP_DAY` |
 | Rate-Limit je IP / global | 5 je Minute, 30 je Stunde / 200 Fragen je Stunde | `AI_CHAT_IP_PER_MIN`, `AI_CHAT_IP_PER_HOUR`, `AI_CHAT_GLOBAL_PER_HOUR` |
-| Eingabe / Antwort | 500 Zeichen / `max_tokens` 800, Verlauf 2 Austausche (serverseitig), höchstens 3 API-Aufrufe und 40 s je Frage | `AI_CHAT_MAX_INPUT_CHARS`, `AI_CHAT_MAX_TOKENS`, `AI_CHAT_HISTORY`, `AI_CHAT_DEADLINE` |
+| Eingabe / Antwort | 500 Zeichen / `max_tokens` 2000 (inkl. Denkanteil; 800 reichte live nicht), Verlauf 2 Austausche (serverseitig), höchstens 3 API-Aufrufe und 40 s je Frage | `AI_CHAT_MAX_INPUT_CHARS`, `AI_CHAT_MAX_TOKENS`, `AI_CHAT_HISTORY`, `AI_CHAT_DEADLINE` |
 | Parallelität | 1 Chat-Frage je gunicorn-Prozess (Chat und Dashboard teilen sich 2 × 2 Threads); Überlauf = 503 «ausgelastet», ungezählt | `AI_CHAT_CONCURRENCY` |
 
 Harte Grenzen im Code (die Umgebung kann nur senken): Monat 1000 Rappen, Sitzung 20 Rappen, IP-Tag 30 Rappen; intern gelten 95 % davon. Modell und Preise stehen in der Tabelle `PRICES` in `chat_budget.py`:
@@ -266,7 +266,7 @@ sonst (gefälscht, fehlend, direkter Zugriff auf den lokalen Port) landet die An
 höchstens 30 Tage protokolliert (Bereinigung beim ersten Zugriff des Tages und täglich im Worker, `secure_delete`, montags VACUUM). Frage und Abfrageergebnis gehen an Anthropic (USA); Hinweis im Tab, in der Fusszeile und auf «Datenquellen».
 
 **Datensätze (Whitelist):** Wohnbevölkerung, sechs Lohn-Sichten (Branche, Wohnsitz, Alter, Voll-/Teilzeit, Staatsbürgerschaft, Unternehmensgrösse), Kosten Asylwesen (Landesrechnung Konto 590) und je Kopf, Asyl-Bestand, Ausgaben des Staates nach Funktion (501.031, auch
-«Soziale Sicherung»; Cache-Schlüssel `edu:spend_all`, der Worker spiegelt ihn wöchentlich), Polizei-Kennzahlen, Weltbank-Indikatoren, Klima je Gemeinde, Tourismus, PISA, Arbeitslosenquote, Beschäftigte. **Nicht vorhanden:** Sozialhilfe, AHV/IV-Renten und Krankenkassenprämien als eigene Reihen,
+«Soziale Sicherung»; Cache-Schlüssel `edu:spend_all`, der Worker spiegelt ihn wöchentlich) und fertig je Einwohner gerechnet (`staat_ausgaben_je_einwohner`, geteilt durch die Wohnbevölkerung am Jahresende; so braucht die Gegenüberstellung mit dem Asylaufwand je Kopf keine Rechnung des Modells), Polizei-Kennzahlen, Weltbank-Indikatoren, Klima je Gemeinde, Tourismus, PISA, Arbeitslosenquote, Beschäftigte. **Nicht vorhanden:** Sozialhilfe, AHV/IV-Renten und Krankenkassenprämien als eigene Reihen,
 Beschäftigtenzahlen nach Branche und Geschlecht (deshalb keine Struktur-Zerlegung des Lohnunterschieds), Kosten je Asylgesuch.
 
 Tests: `python -m unittest discover -s tests -v` (Budget/Reservierung inkl. parallele Anfragen, Rate-Limits, Validator, Missbrauchsfälle, Routen; Mock-Anbieter, kein Schlüssel nötig).
