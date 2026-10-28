@@ -638,3 +638,10 @@ hr.filter-hr {
 .chat-notes, .chat-sources, .chat-disclaimer, .chat-detail-line { color: #8B949E; font-size: 0.76rem; margin-top: 4px; }
 .chat-details summary { cursor: pointer; color: #8B949E; font-size: 0.76rem; margin-top: 6px; }
 @media (max-width: 640px) { .chat-q { max-width: 100%; } .chat-msg { padding: 9px 10px; } }
+
+/* Kraki, die Datenkrake (Maskottchen im Tab «Frage zu den Daten») */
+.kk-head { display: flex; align-items: center; gap: 14px; margin-bottom: 10px; }
+.kk-slot { flex: 0 0 auto; width: 88px; min-height: 73px; }
+.kk-slot svg { width: 100%; height: auto; display: block; overflow: visible; }
+.kk-greet { margin: 0; color: #8B949E; font-size: 0.86rem; }
+@media (max-width: 640px) { .kk-slot { width: 64px; min-height: 53px; } .kk-head { gap: 10px; } }

@@ -4,6 +4,47 @@
  */
 (function () {
     var busy = false;
+    var kkState = "";          // "" = bereit, "thinking", "sleeping"; bleibt erhalten, wenn Dash den Tab neu aufbaut
+    var kkSvg = null;          // geparstes kraki.svg (einmal geladen)
+    var kkLoading = false;
+
+    // Kraki: Zustand als Klasse am <svg class="kk">; Grafik rein dekorativ (der Titel daneben ist der zugängliche Text)
+    function setKraki(state) {
+        kkState = state || "";
+        var svg = document.querySelector("#kk-slot svg.kk");
+        if (!svg) return;
+        svg.classList.remove("kk-thinking", "kk-sleeping");
+        if (kkState) svg.classList.add("kk-" + kkState);
+    }
+
+    function fillKraki() {
+        var slot = document.getElementById("kk-slot");
+        if (!slot || slot.querySelector("svg")) return;
+        if (!kkSvg) {
+            if (kkLoading) return;
+            kkLoading = true;
+            fetch("/assets/kraki.svg", { credentials: "same-origin" }).then(function (r) { return r.ok ? r.text() : ""; }).then(function (t) {
+                var doc = t ? new DOMParser().parseFromString(t, "image/svg+xml") : null;
+                var el = doc && doc.documentElement && doc.documentElement.nodeName.toLowerCase() === "svg" ? doc.documentElement : null;
+                if (el) {
+                    el.removeAttribute("role"); el.removeAttribute("aria-label"); el.removeAttribute("width"); el.removeAttribute("height");
+                    el.setAttribute("aria-hidden", "true"); el.setAttribute("focusable", "false");
+                    kkSvg = el;
+                }
+            }).catch(function () {}).then(function () { kkLoading = false; fillKraki(); });
+            return;
+        }
+        slot.appendChild(document.importNode(kkSvg, true));
+        if (kkState === "" ) {                                  // beim ersten Zeigen: ist die Funktion gerade abgeschaltet (Kill-Switch/Kontingent)?
+            fetch("/_chat/status", { credentials: "same-origin" }).then(function (r) { return r.json(); })
+                .then(function (j) { if (j && j.enabled === false && !busy) setKraki("sleeping"); }).catch(function () {});
+        }
+        setKraki(kkState);
+    }
+    new MutationObserver(function () { if (document.getElementById("kk-slot") && !document.querySelector("#kk-slot svg")) fillKraki(); })
+        .observe(document.documentElement, { childList: true, subtree: true });
+    fillKraki();
+
     var COLORS = ["#58A6FF", "#F0883E", "#3FB950", "#BC8CFF", "#D4A017", "#CE1126", "#39C5CF", "#FF7B72"];
 
     function mk(tag, cls, text) {
@@ -107,20 +148,28 @@
         busy = true;
         var send = document.getElementById("chat-send");
         if (send) send.disabled = true;
+        setKraki("thinking");
         var qb = addMsg("chat-q"); qb.textContent = q;
+        var status = 0;
         var box = addMsg("chat-a"); box.appendChild(mk("p", "chat-wait", "Einen Moment …"));
         fetch("/_chat/ask", {
             method: "POST", credentials: "same-origin",
             headers: { "Content-Type": "application/json", "X-Requested-With": "dli-chat" },
             body: JSON.stringify({ q: q })
-        }).then(function (r) { return r.json().catch(function () { return { ok: false, message: "Unerwartete Antwort des Servers." }; }); })
+        }).then(function (r) {
+            status = r.status;
+            return r.json().catch(function () { return { ok: false, message: "Unerwartete Antwort des Servers." }; });
+        })
           .then(function (body) {
               box.textContent = "";
               if (body && body.ok) render(box, body);
               else box.appendChild(mk("p", "chat-error", (body && body.message) || "Die Frage konnte nicht beantwortet werden."));
           })
           .catch(function () { box.textContent = ""; box.appendChild(mk("p", "chat-error", "Keine Verbindung zum Server.")); })
-          .then(function () { busy = false; if (send) send.disabled = false; });
+          .then(function () {
+              busy = false; if (send) send.disabled = false;
+              setKraki(status === 503 || status === 429 ? "sleeping" : "");      // nicht verfügbar / Kontingent oder Limit erreicht → Kraki schläft
+          });
     }
 
     document.addEventListener("click", function (e) {

@@ -27,7 +27,13 @@ def render_chat():
     cfg = B.load_config()
     small = {"color": MUTED, "fontSize": "0.82rem", "lineHeight": "1.55"}
     return html.Div([
-        html.H4(["Frage zu den Daten ", html.Span("KI", className="exp-badge")], className="section-title"),
+        html.Div([
+            html.Div(id="kk-slot", className="kk-slot", **{"aria-hidden": "true"}),                 # Kraki (assets/kraki.svg), von chat.js eingesetzt
+            html.Div([
+                html.H4(["Frage zu den Daten ", html.Span("KI", className="exp-badge")], className="section-title", style={"marginBottom": "4px"}),
+                html.P("Hallo, ich bin Kraki. Frag mich etwas zu den Daten.", className="kk-greet"),
+            ]),
+        ], className="kk-head"),
         _card([
             html.P(["Stelle eine Frage in einem Satz. Eine KI (Anthropic Claude Haiku) übersetzt sie in eine Abfrage der Datensätze auf daten.li. ",
                     html.B("Der Server führt Abfrage und Rechnung aus", style={"color": TEXT}),

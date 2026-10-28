@@ -978,5 +978,40 @@ class TestHaertung(Base):
         self.assertGreaterEqual(len(results[0]), 32)
 
 
+class TestKraki(unittest.TestCase):
+    ROOT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..")
+
+    def _read(self, *p):
+        with open(os.path.join(self.ROOT, *p), encoding="utf-8") as f:
+            return f.read()
+
+    def test_svg_hat_zustaende_ohne_externe_ressourcen(self):
+        svg = self._read("assets", "kraki.svg")
+        for k in ("class=\"kk\"", "kk-thinking", "kk-sleeping", "prefers-reduced-motion"):
+            self.assertIn(k, svg)
+        for bad in ("http://", "https://www", "<script", "xlink:href", "url(", "@import", "<image", "onload"):
+            self.assertNotIn(bad.replace("http://", "http://www."), svg.replace("http://www.w3.org/2000/svg", ""))   # nur der SVG-Namensraum ist erlaubt
+
+    def test_tab_zeigt_kraki_slot_und_begruessung(self):
+        import tab_chat
+        txt = json.dumps(tab_chat.render_chat().to_plotly_json(), ensure_ascii=False, default=str)
+        self.assertIn("kk-slot", txt)
+        self.assertIn("Hallo, ich bin Kraki. Frag mich etwas zu den Daten.", txt)
+        self.assertIn("KI-Antwort", json.dumps(S.DISCLAIMER))           # Hinweise bleiben unverändert
+        self.assertIn("Anthropic (USA)", tab_chat.chat_notice_text())
+
+    def test_js_schaltet_zustaende_und_laedt_nur_eigene_datei(self):
+        js = self._read("assets", "chat.js")
+        self.assertIn('setKraki("thinking")', js)
+        self.assertIn('status === 503 || status === 429 ? "sleeping" : ""', js)
+        self.assertIn('fetch("/assets/kraki.svg"', js)
+        self.assertNotIn(".innerHTML", js)                                  # SVG kommt per DOMParser, nie als HTML-String
+
+    def test_tab_beschriftung_und_csp_unveraendert(self):
+        app = self._read("app.py")
+        self.assertIn('label="Frage zu den Daten · Frag Kraki"', app)
+        self.assertIn("style-src 'self' 'unsafe-inline'", app)             # CSP wurde für Kraki nicht erweitert
+
+
 if __name__ == "__main__":
     unittest.main()
