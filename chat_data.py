@@ -234,6 +234,21 @@ def _load_bautaetigkeit() -> pd.DataFrame:
     return _tidy(pd.concat([a, b]), ["Jahr", "Kennzahl", "Gemeinde"])
 
 
+def _load_bildungsstand() -> pd.DataFrame:
+    """Ständige Bevölkerung ab 15 Jahren nach höchster abgeschlossener Ausbildung und Heimat (Volkszählung): Stichtag 31.12.JJJJ → Jahr."""
+    df = _px("edu:attainment")
+    df["Jahr"] = df["Stichtag"].astype(str).str[-4:]
+    return _tidy(df, ["Jahr", "Höchste abgeschlossene Ausbildung", "Heimat"])
+
+
+def _load_lohn_ch() -> pd.DataFrame:
+    return _tidy(_px("lohn:ch"), ["Jahr", "Geschlecht"])
+
+
+def _load_cpi_ch() -> pd.DataFrame:
+    return _tidy(_px("lohn:cpi_ch"), ["Jahr"])
+
+
 def _build_registry() -> dict:
     ds = []
     add = ds.append
@@ -369,6 +384,69 @@ def _build_registry() -> dict:
     simple("asylgesuche", "Asylgesuche und Schutzgesuche nach Jahr", "Gesuche", "233.201", "pxs:li_asylum", ["Jahr", "Bewilligungstyp"], {}, None, [FEHLT], "Bewilligungstyp: Asylgesuche | Schutzgesuche")
     simple("nichtstaendige_bevoelkerung", "Nichtständige Bevölkerung nach Jahr", "Personen", "211.101", "pxs:li_nonperm", ["Jahr"], {}, None,
            ["Nicht Teil der ständigen Wohnbevölkerung (Datensatz bevoelkerung)."])
+    # ── Weitere Tabellen des Amts für Statistik (Bildung, Lohn, Wirtschaft) ──────
+    def pxurl(path: str) -> str:
+        from opendata import px_web_url
+        return px_web_url(path)
+
+    LOHN_NOTES = ["Medianlöhne sind Zentralwerte und lassen sich nicht addieren oder mitteln.",
+                  "Monatlicher Bruttolohn, hochgerechnet auf Vollzeit (100 %), ohne Selbständige; Werte mit weniger als 50 Beobachtungen werden nicht ausgewiesen und fehlen. "
+                  "Unterschiede zwischen Gruppen sind unbereinigte Rohvergleiche und belegen keine Ursache.",
+                  "Die Daten enthalten keine Beschäftigtenzahlen nach Gruppe; ein Zerlegungsanteil (Struktureffekt) lässt sich daraus nicht berechnen."]
+    for key, title, dim, tid, path, tots in (
+        ("lohn_aufenthaltsstatus", "Monatlicher Bruttolohn (Median, Quartile) nach Aufenthaltsstatus und Geschlecht, Erhebungsjahre 2006–2024 alle 2 Jahre", "Aufenthaltsstatus", "291.031",
+         "Arbeit und Erwerb/Löhne/291.031.px", {"Geschlecht": "Geschlecht - Total", "Aufenthaltsstatus": None}),
+        ("lohn_wohnort", "Monatlicher Bruttolohn (Median, Quartile) nach Wohnort und Geschlecht, Erhebungsjahre 2006–2024 alle 2 Jahre", "Wohnort", "291.041",
+         "Arbeit und Erwerb/Löhne/291.041.px", {"Geschlecht": "Geschlecht - Total", "Wohnort": None}),
+    ):
+        base = ["Jahr", dim, "Geschlecht", "Kennzahl"]
+        add(Dataset(key, title, "CHF je Monat", f"{AFS}{tid} (Lohnstatistik)", pxurl(path), _lohn("status" if dim == "Aufenthaltsstatus" else "wohnort", base), base, tots,
+                    additive=False, base_unit="CHF je Monat", notes=LOHN_NOTES, hint="Kennzahl: Median | 1. Quartil | 3. Quartil"))
+    add(Dataset("lohn_verteilung", "Häufigkeitsverteilung der effektiven Bruttomonatslöhne nach Lohnhöhenklasse und Geschlecht (Anteil der Arbeitsverhältnisse), Erhebungsjahre 2006–2024",
+                "% der Arbeitsverhältnisse", AFS + "291.081 (Lohnstatistik)", pxurl("Arbeit und Erwerb/Löhne/291.081.px"),
+                _px_loader("lohn:verteilung", ["Jahr", "Lohnhöhenklasse", "Geschlecht"]), ["Jahr", "Lohnhöhenklasse", "Geschlecht"],
+                {"Geschlecht": "Geschlecht - Total", "Lohnhöhenklasse": "Lohnhöhenklasse - Total"}, additive=False, base_unit="%",
+                notes=["Anteile in % der Arbeitsverhältnisse je Lohnhöhenklasse (effektiv bezogene Monatslöhne, nicht auf Vollzeit hochgerechnet; deshalb nicht direkt mit dem Median vergleichbar).",
+                       "Unterschiede zwischen Frauen und Männern sind unbereinigte Rohvergleiche und belegen keine Ursache."],
+                hint="Lohnhöhenklasse z. B. «8001 - 9000 CHF»"))
+    add(Dataset("lohn_schweiz", "Zentralwert (Median) des monatlichen Bruttolohns in der Schweiz nach Geschlecht (BFS-Lohnstrukturerhebung, alle Branchen und Stellungen), 2012–2024 alle 2 Jahre",
+                "CHF je Monat", "Bundesamt für Statistik (BFS), Schweizerische Lohnstrukturerhebung (OGD, © BFS)",
+                "https://www.bfs.admin.ch/bfs/de/home/statistiken/arbeit-erwerb/loehne-erwerbseinkommen-arbeitskosten/lohnniveau-schweiz.html",
+                _load_lohn_ch, ["Jahr", "Geschlecht"], {"Geschlecht": "Geschlecht - Total"}, additive=False, base_unit="CHF je Monat",
+                notes=["Einordnung, keine gleich erhobene Reihe: Die Liechtensteiner Löhne stammen aus Lohnmeldungen an die Steuerverwaltung (Amt für Statistik), die Schweizer Werte aus der BFS-Lohnstrukturerhebung.",
+                       "Zentralwerte lassen sich nicht addieren oder mitteln; Unterschiede zwischen Gruppen sind unbereinigte Rohvergleiche."],
+                hint="Vergleich mit dem Median in lohn_branche (Total)"))
+    add(Dataset("teuerung_schweiz", "Konsumentenpreisindex Schweiz (2010 = 100)", "Index (2010 = 100)", "Weltbank, World Development Indicators FP.CPI.TOTL (CC BY 4.0)",
+                "https://data.worldbank.org/indicator/FP.CPI.TOTL?locations=CH", _load_cpi_ch, ["Jahr"], {}, additive=False, base_unit="Index",
+                notes=["Schweizer Index; für Liechtenstein gibt es in den genutzten Quellen keine eigene Teuerungsreihe. Er dient nur als Näherung und ist keine amtliche liechtensteinische Teuerung."]))
+    CLS = "Bildung/Schulen/481.003.px"
+    add(Dataset("klassen", "Schulkinder, Anzahl Klassen und Klassengrösse nach Schuljahr und Schulstufe", "gemäss Kennzahl", AFS + "481.003", pxurl(CLS),
+                _px_loader("edu:classes", ["Schuljahr", "Schulstufe", "Kennzahl"], {"Jahr": "Schuljahr"}), ["Schuljahr", "Schulstufe", "Kennzahl"],
+                {"Schulstufe": "Schulstufe - Total"}, additive=False, base_unit="Anzahl",
+                notes=[HST, "Klassengrösse ist ein Durchschnitt (Schulkinder je Klasse) und lässt sich nicht addieren; Einheit je Kennzahl: Schulkinder = Personen, Anzahl Klassen = Klassen.",
+                       "Fehlende Werte (Datenschutz/nicht ausgewiesen) erscheinen nicht."],
+                hint="Kennzahl: Schulkinder | Anzahl Klassen | Klassengrösse; Schuljahr z. B. 2024/25"))
+    add(Dataset("schulpersonal", "Schulpersonal in Vollzeitäquivalenten (VZÄ) an Schulen nach Schuljahr und Personalkategorie", "VZÄ", AFS + "481.202", pxurl("Bildung/Schulen/481.202.px"),
+                _px_loader("edu:staff", ["Schuljahr", "Personalkategorie"]), ["Schuljahr", "Personalkategorie"], {"Personalkategorie": "Schulpersonal (VZÄ) - Total"},
+                additive=False, base_unit="VZÄ", notes=["Vollzeitäquivalente (Stellenprozente), nicht Personen; alle Schulen und Schulstufen zusammen. Das Schuljahr steht hier als 2024/2025."],
+                hint="Schuljahr z. B. 2024/2025"))
+    add(Dataset("bildungsstand", "Ständige Bevölkerung ab 15 Jahren nach höchster abgeschlossener Ausbildung und Heimat (Volkszählung 2010, 2015, 2020)", "Personen", AFS + "491.002d",
+                pxurl("Bildung/Bildungsstand/491.002d.px"), _load_bildungsstand, ["Jahr", "Höchste abgeschlossene Ausbildung", "Heimat"],
+                {"Höchste abgeschlossene Ausbildung": "Höchste abgeschlossene Ausbildung - Total", "Heimat": "Heimat - Total"}, additive=False, base_unit="Personen",
+                notes=["Nur die Stichtage 31.12.2010, 2015 und 2020 (Volkszählung); die Ausbildungsstufen sind teilweise hierarchisch (z. B. Höhere Fachschule als Teil der höheren Berufsbildung): Teilwerte nicht addieren."]))
+    add(Dataset("banken_bilanz_aktiven", "Bilanz der Banken in Liechtenstein, Aktiven (Einzelbasis) nach Jahr und Domizil", "Tausend CHF", AFS + "363.101 (Banken, Einzelbasis)",
+                pxurl("Wirtschaftsbereiche und Unternehmen/Banken/Einzelbasis/363.101.px"),
+                _px_loader("Wirtschaftsbereiche und Unternehmen/Banken/Einzelbasis/363.101.px", ["Jahr", "Aktiven", "Domizil"]), ["Jahr", "Aktiven", "Domizil"],
+                {"Domizil": "Domizil - Total"}, additive=False, base_unit="Tausend CHF",
+                notes=["Einzelbasis (einzelne Bankinstitute, ohne Konsolidierung der Tochtergesellschaften), Werte in Tausend CHF: «Total Aktiven» entspricht der Bilanzsumme. Die Posten sind teilweise hierarchisch (z. B. Hypothekarforderungen als Teil der Forderungen gegenüber Kunden): Teilwerte nicht addieren.",
+                       "Domizil: «Davon Frankenwährungsgebiet» und «Davon Liechtenstein» sind Teilwerte des Totals."],
+                hint="Aktiven z. B. «Total Aktiven», «Forderungen gegenüber Kunden»"))
+    add(Dataset("forschung_entwicklung", "Interne F+E-Aufwendungen nach Forschungsart und Sektor (Erhebungsjahre 2019 und 2023)", "Tausend CHF", AFS + "371.003 (Forschung und Entwicklung)",
+                pxurl("Wirtschaftsbereiche und Unternehmen/Forschung und Entwicklung/371.003.px"),
+                _px_loader("Wirtschaftsbereiche und Unternehmen/Forschung und Entwicklung/371.003.px", ["Jahr", "Forschungsart", "Sektor"]), ["Jahr", "Forschungsart", "Sektor"],
+                {"Forschungsart": "Forschungsart - Total", "Sektor": "Sektor - Total"}, additive=False, base_unit="Tausend CHF",
+                notes=["Werte in Tausend CHF (2023: 447 520 = CHF 447.5 Mio.). Die Erhebung bei den Unternehmen findet nur alle vier Jahre statt: Es gibt nur die Jahre 2019 und 2023, keine Zwischenjahre.",
+                       "Nur interne Aufwendungen (Ausgaben für Forschung und Entwicklung in Liechtenstein), ohne externe Aufwendungen."]))
     return {d.key: d for d in ds}
 
 

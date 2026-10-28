@@ -49,6 +49,12 @@ FIX = {
             (2023, "Ruggell", "Nutzungsart - Total", "Am Stichtag nicht bewohnt", 90.0), (2023, "Ruggell", "Nutzungsart - Total", "Belegungsstatus - Total", 1144.0),
             (2024, "Liechtenstein", "Nutzungsart - Total", "Am Stichtag nicht bewohnt", 2000.0), (2024, "Liechtenstein", "Nutzungsart - Total", "Belegungsstatus - Total", 22447.0))]),
     "wohnungsbestand": _df(["Jahr", "Gemeinde", "Wert"], [(2023, "Ruggell", 1144.0), (2024, "Ruggell", 1155.0), (2024, "Liechtenstein", 22447.0)]),
+    "lohn_schweiz": _df(["Jahr", "Geschlecht", "Wert"], [(2022, "Geschlecht - Total", 6900.0), (2024, "Geschlecht - Total", 7024.0), (2024, "Männer", 7276.0), (2024, "Frauen", 6700.0)]),
+    "banken_bilanz_aktiven": _df(["Jahr", "Aktiven", "Domizil", "Wert"], [
+        (2024, "Total Aktiven", "Domizil - Total", 84781205.0), (2025, "Total Aktiven", "Domizil - Total", 80434930.0), (2024, "Total Aktiven", "Davon Liechtenstein", 1000.0),
+        (2024, "Flüssige Mittel", "Domizil - Total", 8027848.0)]),
+    "forschung_entwicklung": _df(["Jahr", "Forschungsart", "Sektor", "Wert"], [
+        (2019, "Forschungsart - Total", "Sektor - Total", 375362.0), (2023, "Forschungsart - Total", "Sektor - Total", 447520.0), (2023, "Forschungsart - Total", "Staat", 534.0)]),
     "lohn_branche": _df(["Jahr", "Wirtschaftszweig", "Geschlecht", "Kennzahl", "Wert"], [
         (2024, "Wirtschaftszweig - Total", "Geschlecht - Total", "Median", 7300.0), (2024, "Wirtschaftszweig - Total", "Männer", "Median", 7800.0), (2024, "Wirtschaftszweig - Total", "Frauen", "Median", 6600.0),
         (2024, "Industrie", "Männer", "Median", 7400.0), (2024, "Industrie", "Frauen", "Median", 6900.0), (2024, "Industrie", "Geschlecht - Total", "Median", 7300.0),
@@ -150,6 +156,45 @@ class TestEngine(unittest.TestCase):
         self.assertEqual(sorted(df["Kennzahl"]), ["Bruttomiete", "Nettomiete"])
         self.assertEqual(set(df["Jahr"]), {2020})
         self.assertEqual(df[df["Kennzahl"] == "Nettomiete"]["Wert"].iloc[0], 1500.0)
+
+    def test_schweiz_vergleich_banken_und_forschung_mit_einheit_und_hinweis(self):
+        r = D.execute({"queries": [{"id": "a", "dataset": "lohn_schweiz", "group_by": ["Jahr"], "label": "Schweiz"}]}, frames)
+        self.assertEqual({x["Jahr"]: x["Schweiz"] for x in r.rows}[2024], 7024.0)           # Total (nicht Männer/Frauen) automatisch
+        self.assertTrue(any("keine gleich erhobene Reihe" in n for n in r.notes))
+        self.assertIn("BFS", r.sources[0][0])
+        b = D.execute({"queries": [{"dataset": "banken_bilanz_aktiven", "filters": {"Aktiven": ["Total Aktiven"]}, "group_by": ["Jahr"]}]}, frames)
+        self.assertEqual(b.units[b.values[0]], "Tausend CHF")                               # 84 781 205 = CHF 84.8 Mrd (Statistikportal)
+        self.assertEqual({x["Jahr"]: x[b.values[0]] for x in b.rows}[2024], 84781205.0)      # Domizil «Total», nicht «Davon Liechtenstein»
+        self.assertTrue(any("Tausend CHF" in n for n in b.notes))
+        f = D.execute({"queries": [{"dataset": "forschung_entwicklung", "group_by": ["Jahr"]}]}, frames)
+        self.assertEqual([x["Jahr"] for x in f.rows], [2019, 2023])                          # nur zwei Erhebungsjahre
+        self.assertTrue(any("alle vier Jahre" in n for n in f.notes))
+
+    def test_bildungsstand_loader_stichtag_wird_jahr(self):
+        px = {"edu:attainment": _df(["Stichtag", "Höchste abgeschlossene Ausbildung", "Heimat", "Geschlecht", "Wert"],
+                                    [("31.12.2020", "Höchste abgeschlossene Ausbildung - Total", "Heimat - Total", "Geschlecht - Total", 33360.0), ("31.12.2010", "Maturität", "Liechtensteiner", "Geschlecht - Total", 2000.0)])}
+        old = D._px
+        D._px = lambda key: px[key].copy()
+        try:
+            df = D._load_bildungsstand()
+        finally:
+            D._px = old
+        self.assertEqual(sorted(df["Jahr"]), [2010, 2020])
+        self.assertNotIn("Stichtag", df.columns)
+
+    def test_neue_lohn_bildungs_wirtschaftsdatensaetze_haben_quelle_mit_id_und_lizenz(self):
+        reg = D.registry()
+        expect = {"lohn_aufenthaltsstatus": "291.031", "lohn_wohnort": "291.041", "lohn_verteilung": "291.081", "klassen": "481.003", "schulpersonal": "481.202",
+                  "bildungsstand": "491.002d", "banken_bilanz_aktiven": "363.101", "forschung_entwicklung": "371.003"}
+        for k, tid in expect.items():
+            self.assertIn(tid, reg[k].source, k)
+            self.assertIn("CC BY", reg[k].source, k)
+            self.assertTrue(reg[k].source_url.startswith("https://"), k)
+        self.assertEqual(reg["lohn_schweiz"].unit, "CHF je Monat")
+        self.assertIn("CC BY 4.0", reg["teuerung_schweiz"].source)
+        self.assertEqual(reg["lohn_verteilung"].unit, "% der Arbeitsverhältnisse")
+        for k in ("lohn_aufenthaltsstatus", "lohn_wohnort"):
+            self.assertTrue(any("Medianlöhne sind Zentralwerte" in n for n in reg[k].notes), k)
 
     def test_alle_datensaetze_haben_quelle_einheit_und_https_link(self):
         reg = D.registry()

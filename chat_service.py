@@ -28,7 +28,7 @@ log = logging.getLogger("chat")
 API_URL = "https://api.anthropic.com/v1/messages"
 API_VERSION = "2023-06-01"
 DISCLAIMER = "KI-Antwort, ungeprüft. Massgebend sind die Tabelle und die Quelle."
-TOPICS = ("Bevölkerung, Wohnen (nicht bewohnte Wohnungen/Leerstand, Wohnungsbestand, Gebäude, Mieten, Baubewilligungen), Löhne, Bildung (Schulkinder, Lernende, Studierende, Matura, PISA), Migration (Ein- und Auswanderung, Einbürgerungen, Asylwesen), Staatsausgaben, Polizeistatistik, Wirtschaft (Weltbank), Klima, Tourismus, Arbeitslosigkeit, Beschäftigte")
+TOPICS = ("Bevölkerung, Wohnen (nicht bewohnte Wohnungen/Leerstand, Wohnungsbestand, Gebäude, Mieten, Baubewilligungen), Löhne (nach Branche, Alter, Wohnort, Aufenthaltsstatus, Lohnverteilung, Vergleich Schweiz), Bildung (Schulkinder, Klassen, Schulpersonal, Lernende, Studierende, Matura, Bildungsstand, PISA), Migration (Ein- und Auswanderung, Einbürgerungen, Asylwesen), Staatsausgaben, Polizeistatistik, Wirtschaft (Weltbank, Banken-Bilanz, Forschung und Entwicklung, Teuerung Schweiz), Klima, Tourismus, Arbeitslosigkeit, Beschäftigte")
 MSG_OFF = ("Dazu kann ich nur Fragen zu den Daten auf daten.li beantworten. Der Chat kennt Daten zu: " + TOPICS + ". Bitte stelle eine Frage zu diesen Themen.")
 MSG_NUMBERS = ("Die Zahlen stehen in der Tabelle. Der von der KI formulierte Text wurde nicht angezeigt, weil er Zahlen enthielt, "
                "die nicht im Abfrageergebnis stehen.")
@@ -68,6 +68,7 @@ Hinweise zum Werkzeug
 - Pro Kopf: Verhältnis (ratio) mit dem Datensatz bevoelkerung als b (Wohngemeinde Liechtenstein, join auf Jahr). Der Server rechnet Mio. CHF und CHF selbst um.
 - Fertig je Einwohner gerechnet gibt es: staat_ausgaben_je_einwohner (Staatsausgaben nach Funktion, z. B. Funktion «Soziale Sicherung» = Sozialleistungen/Sozialausgaben) und asyl_kosten_je_kopf (Asylaufwand, Kennzahl «Netto-Aufwand je Einwohner (Wohnbevölkerung Jahresende)»). Für eine Gegenüberstellung beider: zwei queries (group_by ["Jahr"], eigene label), keine derive, output beide ids, chart "line".
 - Wohnen: leere/leerstehende Wohnungen = Datensatz wohnungen_belegung mit Belegungsstatus «Am Stichtag nicht bewohnt» (Gemeinde angeben, sonst gilt ganz Liechtenstein); Anteil = ratio mit wohnungsbestand (per 100). Nenne bei Leerstand-Antworten den Hinweis zur Abgrenzung (amtliche «nicht bewohnt»-Statistik, nicht marktwirksamer Leerstand). Mieten: mieten_zimmer/mieten_flaeche (nur 2010, 2015, 2020); Kauf- und Angebotspreise gibt es nicht.
+- Löhne: Vergleich mit der Schweiz = lohn_schweiz (Zentralwert, Total) neben lohn_branche (Median, Total) im selben output (gleiche Spalte Jahr); Einheiten der Zeitreihen stehen im Ergebnis. Banken-Bilanz und F+E-Aufwendungen sind in Tausend CHF.
 - Halte die Abfrage knapp (nur nötige Felder, kurze ids und labels) und rufe das Werkzeug direkt auf, ohne lange Vorüberlegung.
 """
 
