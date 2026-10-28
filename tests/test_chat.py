@@ -216,9 +216,9 @@ class TestBudget(Base):
         ts = [threading.Thread(target=worker, args=(i,)) for i in range(40)]
         [t.start() for t in ts]
         [t.join() for t in ts]
-        self.assertEqual(len(ok), 10)
-        self.assertEqual(len(fail), 30)
-        self.assertEqual(B.usage_snapshot(cfg)["reserved_rp"], 10.0)
+        self.assertEqual(len(ok), 9)                                  # intern gelten 95 % des Budgets: 9.5 Rappen → 9 Reservierungen zu 1 Rappen
+        self.assertEqual(len(fail), 31)
+        self.assertEqual(B.usage_snapshot(cfg)["reserved_rp"], 9.0)
 
     def test_rate_limit_pro_minute_und_stunde(self):
         os.environ["AI_CHAT_IP_PER_MIN"] = "3"
@@ -301,7 +301,7 @@ class Mock:
         self.script = list(script)
         self.calls = []
 
-    def complete(self, cfg, system, messages, tools, tool_choice, max_tokens):
+    def complete(self, cfg, system, messages, tools, tool_choice, max_tokens, timeout=None):
         self.calls.append({"system": system, "messages": json.loads(json.dumps(messages)), "tool_choice": tool_choice, "max_tokens": max_tokens, "tools": tools})
         item = self.script.pop(0) if self.script else {"content": [{"type": "text", "text": "ok"}], "stop_reason": "end_turn", "usage": {"input_tokens": 1, "output_tokens": 1}}
         if isinstance(item, Exception):
@@ -463,6 +463,7 @@ class TestService(Base):
         os.environ["AI_CHAT_MONTH_BUDGET_RP"] = "0.2"                       # reicht für wenige Aufrufe
         for k in ("AI_CHAT_IP_PER_MIN", "AI_CHAT_IP_PER_HOUR", "AI_CHAT_GLOBAL_PER_HOUR", "AI_CHAT_SESSIONS_PER_IP_DAY"):
             os.environ[k] = "1000"
+        os.environ["AI_CHAT_CONCURRENCY"] = "50"                            # hier geht es um das Budget, nicht um die Parallelitätsgrenze
 
         class Slow(Mock):
             def complete(self, *a, **k):
@@ -529,7 +530,7 @@ class TestRoutes(Base):
         self.assertIn("SameSite=Lax", cookie)
         # hinter dem Proxy lautet Host «127.0.0.1:38517»; die erlaubte Herkunft entscheidet
         S.set_provider(Mock([text("x")] * 5))
-        r2 = c.post("/_chat/ask", json={"q": "Hallo"}, headers={"Host": "127.0.0.1:38517", "Origin": "https://datenportal.li", "X-Forwarded-For": "9.9.9.9,203.0.113.5"})
+        r2 = c.post("/_chat/ask", json={"q": "Hallo"}, headers={"Host": "127.0.0.1:38517", "Origin": "https://datenportal.li", "X-Forwarded-For": "203.0.113.5"})
         self.assertEqual(r2.status_code, 200)
         # fremde Herkunft, fehlender Header, kein JSON, zu grosse Anfrage
         self.assertEqual(c.post("/_chat/ask", json={"q": "x"}, headers={"Host": "daten.li", "Origin": "https://evil.example"}).status_code, 403)
@@ -542,12 +543,377 @@ class TestRoutes(Base):
         c = self.client()
         S.set_provider(Mock([text("x")] * 5))
         c.set_cookie("dli_chat", "gefaelscht", path="/_chat")
-        r = c.post("/_chat/ask", json={"q": "Hallo"}, headers={"Host": "daten.li", "X-Requested-With": "dli-chat", "X-Forwarded-For": "6.6.6.6, 203.0.113.5"})
+        r = c.post("/_chat/ask", json={"q": "Hallo"}, headers={"Host": "daten.li", "X-Requested-With": "dli-chat", "X-Forwarded-For": "203.0.113.5"})
         self.assertEqual(r.status_code, 200)
         self.assertIn("dli_chat=", r.headers.get("Set-Cookie", ""))       # neue Sitzung statt gefälschter
+        ih = B.ip_hash("203.0.113.5")
         with B._Tx() as cx:
-            n = cx.execute("SELECT COUNT(*) FROM chat_ip WHERE ip_hash = ?", (B.ip_hash("203.0.113.5"),)).fetchone()[0]
-        self.assertEqual(n, 1)                                              # rechter Eintrag zählt, der linke (fälschbare) nicht
+            n = cx.execute("SELECT COUNT(*) FROM chat_ip WHERE ip_hash = ?", (ih,)).fetchone()[0]
+        self.assertEqual(n, 1)                                              # genau ein XFF-Eintrag: vertrauenswürdig
+
+
+# ── Nachbesserungen aus dem Sicherheits-Review ────────────────────────────────
+
+class TestFailClosedKosten(Base):
+    def cfg(self):
+        return B.load_config()
+
+    def test_fehlende_oder_unbrauchbare_usage_wird_als_schlimmster_fall_verbucht(self):
+        cfg, worst = self.cfg(), 123_456
+        full = {"input_tokens": 100, "output_tokens": 10}
+        for usage in (None, {}, "x", [], {"input_tokens": 5}, {"output_tokens": 5}, {"input_tokens": "9", "output_tokens": 9}, {"input_tokens": -1, "output_tokens": 3},
+                      {"input_tokens": 0, "output_tokens": 0}, {"input_tokens": True, "output_tokens": 1}, {"input_tokens": 5, "output_tokens": 5, "cache_read_input_tokens": "x"}):
+            resp = {"content": [{"type": "text", "text": "hallo"}], "stop_reason": "end_turn"}
+            if usage is not None:
+                resp["usage"] = usage
+            self.assertEqual(B.charge_urp(cfg, resp, worst), worst, msg=str(usage))
+        ok = {"content": [{"type": "text", "text": "x"}], "usage": full}
+        self.assertEqual(B.charge_urp(cfg, ok, worst), 100 * 10 + 10 * 50)
+        self.assertEqual(B.charge_urp(cfg, "kein dict", worst), worst)
+
+    def test_max_tokens_kostet_mindestens_die_volle_ausgabe(self):
+        cfg = self.cfg()
+        resp = {"content": [{"type": "text", "text": "x"}], "stop_reason": "max_tokens", "usage": {"input_tokens": 100, "output_tokens": 5}}
+        self.assertGreaterEqual(B.charge_urp(cfg, resp, 10**9), cfg.max_tokens * 50)
+
+    def test_dienst_bucht_ohne_usage_den_schlimmsten_fall(self):
+        r = text("Siehe Tabelle.")
+        r.pop("usage")
+        m = Mock([r])
+        S.set_provider(m)
+        S.handle_question("Asylkosten pro Kopf?", None, "1.1.1.1", frames=frames)
+        snap = B.usage_snapshot()
+        cfg = B.load_config()
+        self.assertGreaterEqual(snap["spent_rp"] * B.URP, B.worst_case_urp(cfg, 1000) * 0.5)     # nicht 0
+        self.assertEqual(snap["reserved_rp"], 0)
+
+    def test_reserve_leck_bei_beliebiger_exception_wird_abgerechnet(self):
+        class Boom:
+            def complete(self, *a, **k):
+                raise UnicodeEncodeError("utf-8", "x", 0, 1, "kaputt")
+        S.set_provider(Boom())
+        out = S.handle_question("Asylkosten pro Kopf?", None, "1.1.1.2", frames=frames)
+        self.assertEqual(out["status"], 500)
+        snap = B.usage_snapshot()
+        self.assertEqual(snap["reserved_rp"], 0)                    # nichts bleibt reserviert
+        self.assertGreater(snap["spent_rp"], 0)                     # Zustand unklar: schlimmster Fall verbucht
+        with B._Tx() as c:
+            self.assertEqual(c.execute("SELECT COUNT(*) FROM chat_reservation").fetchone()[0], 0)
+            row = c.execute("SELECT outcome, cost_urp FROM chat_log").fetchone()
+        self.assertEqual(row["outcome"], "error")
+        self.assertGreater(row["cost_urp"], 0)                      # Protokoll zeigt die gebuchten Kosten auch bei Fehlern
+
+    def test_liegengebliebene_reservierung_wird_nach_3_minuten_als_kosten_verbucht(self):
+        cfg = B.load_config()
+        now = 1_800_000_000.0
+        adm = B.admit(None, "2.2.2.2", cfg, now)
+        B.reserve(adm, 5 * B.URP, cfg, now)                          # Prozess stirbt: settle wird nie aufgerufen
+        self.assertEqual(B.usage_snapshot(cfg, now)["reserved_rp"], 5.0)
+        B.reserve(adm, B.URP, cfg, now + 60)                         # jünger als 3 Minuten: bleibt reserviert
+        self.assertEqual(B.usage_snapshot(cfg, now + 60)["spent_rp"], 0)
+        B.reserve(adm, B.URP, cfg, now + 400)                        # älter: als verbraucht gebucht, nicht freigegeben
+        snap = B.usage_snapshot(cfg, now + 400)
+        self.assertEqual(snap["spent_rp"], 6.0)
+        self.assertEqual(snap["reserved_rp"], 1.0)
+        # späteres settle der längst verbuchten Reservierung bucht nur einen Mehrbetrag nach
+        B.settle(adm, B.Reservation(1, 5 * B.URP, adm.ym), 7 * B.URP)
+        self.assertEqual(B.usage_snapshot(cfg, now + 400)["spent_rp"], 8.0)
+
+    def test_settle_scheitert_nicht_still(self):
+        cfg = B.load_config()
+        adm = B.admit(None, "2.2.2.3", cfg)
+        res = B.reserve(adm, B.URP, cfg)
+        calls = {"n": 0}
+        real = B.settle
+
+        def flaky(*a, **k):
+            calls["n"] += 1
+            if calls["n"] < 3:
+                import sqlite3
+                raise sqlite3.OperationalError("database is locked")
+            return real(*a, **k)
+        B.settle = flaky
+        try:
+            self.assertTrue(B.settle_safe(adm, res, 400_000))
+        finally:
+            B.settle = real
+        self.assertEqual(B.usage_snapshot(cfg)["spent_rp"], 0.4)
+
+    def test_tx_schliesst_verbindung_wenn_begin_fehlschlaegt(self):
+        import sqlite3
+
+        class Fake:
+            closed = False
+            def execute(self, *a):
+                raise sqlite3.OperationalError("database is locked")
+            def close(self):
+                Fake.closed = True
+        real = B.connect
+        B.connect = lambda: Fake()
+        try:
+            with self.assertRaises(sqlite3.OperationalError):
+                with B._Tx():
+                    pass
+        finally:
+            B.connect = real
+        self.assertTrue(Fake.closed)
+
+    def test_preistabelle_und_harte_grenzen(self):
+        os.environ["AI_CHAT_MODEL"] = "claude-opus-5-5"
+        cfg = B.load_config()
+        self.assertFalse(cfg.enabled)                                # unbekanntes Modell = Funktion aus
+        self.assertIn("Modell", cfg.disabled_reason)
+        self.assertEqual(S.handle_question("Hallo", None, "1.1.1.1")["status"], 503)
+        os.environ["AI_CHAT_MODEL"] = "claude-haiku-5-5"
+        os.environ.update(AI_CHAT_PRICE_IN_URP="0.001", AI_CHAT_PRICE_OUT_URP="0.001", AI_CHAT_MONTH_BUDGET_RP="999999", AI_CHAT_SESSION_BUDGET_RP="500",
+                          AI_CHAT_IP_DAY_BUDGET_RP="1e9")
+        cfg = B.load_config()
+        self.assertTrue(cfg.enabled)
+        self.assertEqual((cfg.price_in_urp, cfg.price_out_urp), (10.0, 50.0))      # nie unter dem Tabellenwert
+        self.assertEqual(cfg.month_budget_urp, 1000 * B.URP)
+        self.assertEqual(cfg.session_budget_urp, 20 * B.URP)
+        self.assertEqual(cfg.ip_day_budget_urp, 30 * B.URP)
+        os.environ["AI_CHAT_MONTH_BUDGET_RP"] = "nan"
+        self.assertEqual(B.load_config().month_budget_urp, 1000 * B.URP)
+
+    def test_schaetzung_ist_konservativ_fuer_emoji_und_cjk(self):
+        cfg = B.load_config()
+        cjk = "漢字🙂" * 400
+        est = B.worst_case_urp(cfg, len(cjk.encode("utf-8")))
+        real_tokens_upper = len(cjk)                                  # ein Token je Zeichen wäre schon pessimistisch
+        self.assertGreaterEqual(est, (real_tokens_upper * cfg.price_in_urp) + cfg.max_tokens * cfg.price_out_urp)
+
+
+class TestAnbieterFehler(Base):
+    def post_raises(self, exc=None, status=None, body=None, text_body=None):
+        import requests
+
+        class Resp:
+            def __init__(self):
+                self.status_code = status
+
+            def json(self):
+                if text_body is not None:
+                    raise ValueError("kein JSON")
+                return body
+        real = requests.post
+
+        def fake(*a, **k):
+            if exc:
+                raise exc
+            return Resp()
+        requests.post = fake
+        try:
+            try:
+                S.AnthropicProvider().complete(B.load_config(), "s", [{"role": "user", "content": "x"}], [S.TOOL], {"type": "auto"}, 100)
+            except S.ProviderError as e:
+                return e
+            return None
+        finally:
+            requests.post = real
+
+    def test_verbindungsfehler_nach_dem_senden_werden_verbucht(self):
+        import requests
+        from urllib3.exceptions import NewConnectionError
+        self.assertTrue(self.post_raises(requests.exceptions.ReadTimeout("lesen")).charge_worst)
+        self.assertTrue(self.post_raises(requests.exceptions.ConnectionError("Connection reset by peer")).charge_worst)
+        self.assertTrue(self.post_raises(requests.exceptions.ChunkedEncodingError("abgebrochen")).charge_worst)
+        self.assertFalse(self.post_raises(requests.exceptions.ConnectTimeout("connect")).charge_worst)
+        self.assertFalse(self.post_raises(requests.exceptions.ConnectionError(NewConnectionError(None, "Failed to establish a new connection"))).charge_worst)
+        self.assertFalse(self.post_raises(requests.exceptions.SSLError("CERTIFICATE_VERIFY_FAILED")).charge_worst)
+
+    def test_http_fehler_nur_mit_gueltigem_json_gelten_als_sicher(self):
+        err = lambda t: {"type": "error", "error": {"type": t, "message": "m"}}
+        for st in (400, 401, 403, 429, 529):
+            self.assertFalse(self.post_raises(status=st, body=err("x")).charge_worst, msg=st)
+        for st in (500, 502, 503, 504, 404, 413):                    # auch mit JSON: unklar → verbuchen
+            self.assertTrue(self.post_raises(status=st, body=err("api_error")).charge_worst, msg=st)
+        self.assertTrue(self.post_raises(status=502, text_body="<html>Bad Gateway</html>").charge_worst)       # Zwischenproxy, kein JSON
+        self.assertTrue(self.post_raises(status=429, text_body="x").charge_worst)
+        self.assertTrue(self.post_raises(status=429, body={"unerwartet": 1}).charge_worst)                    # kein gültiges Fehlerobjekt
+        self.assertTrue(self.post_raises(status=200, body={"type": "kaputt"}).charge_worst)
+
+
+class TestIpVertrauen(Base):
+    def req(self, xff=None, remote="127.0.0.1", extra=None):
+        from flask import Flask
+        app = Flask("t")
+        headers = {}
+        if xff is not None:
+            headers["X-Forwarded-For"] = xff
+        headers.update(extra or {})
+        with app.test_request_context("/", headers=headers, environ_overrides={"REMOTE_ADDR": remote}):
+            from flask import request
+            return S.client_ip(request, B.load_config())
+
+    def test_nur_genau_ein_xff_eintrag_wird_vertraut(self):
+        self.assertEqual(self.req("203.0.113.5"), ("203.0.113.5", True))
+        self.assertEqual(self.req("1.2.3.4,1.2.3.4,203.0.113.5"), (S.UNTRUSTED_IP, False))       # live gemessen: gefälschter Header ergibt 3 Einträge
+        self.assertEqual(self.req("1.2.3.4, 5.6.7.8,1.2.3.4, 5.6.7.8,203.0.113.5"), (S.UNTRUSTED_IP, False))
+        self.assertEqual(self.req(None), (S.UNTRUSTED_IP, False))                                  # direkter Zugriff auf den lokalen Port
+        self.assertEqual(self.req("kein-ip"), (S.UNTRUSTED_IP, False))
+
+    def test_proxy_geheimnis(self):
+        os.environ["AI_CHAT_PROXY_SECRET"] = "geheim123"
+        self.assertEqual(self.req("203.0.113.5"), (S.UNTRUSTED_IP, False))
+        self.assertEqual(self.req("203.0.113.5", extra={"X-Dli-Proxy": "falsch"}), (S.UNTRUSTED_IP, False))
+        self.assertEqual(self.req("203.0.113.5", extra={"X-Dli-Proxy": "geheim123"}), ("203.0.113.5", True))
+
+    def test_unsicherer_topf_hat_strenge_gemeinsame_limits(self):
+        m = Mock([text("x")] * 20)
+        S.set_provider(m)
+        codes = [S.handle_question("Frage", None, "ignoriert", frames=frames, ip_trusted=False)["status"] for _ in range(6)]
+        self.assertEqual(codes[:3], [200, 200, 200])
+        self.assertIn(429, codes[3:])                                # ab der 4. Frage in der Minute gemeinsam gebremst
+        self.assertLessEqual(len(m.calls), 3)
+
+    def test_ipv6_zaehlt_je_64er_netz_und_mapped_als_ipv4(self):
+        self.assertEqual(B.clean_ip("2001:db8:1:2:aaaa:bbbb:cccc:dddd", ""), "2001:db8:1:2::/64")
+        self.assertEqual(B.clean_ip("2001:db8:1:2:1::1", ""), B.clean_ip("2001:db8:1:2:ffff::2", ""))
+        self.assertEqual(B.clean_ip("::ffff:203.0.113.9", ""), "203.0.113.9")
+        self.assertEqual(B.clean_ip("müll", "198.51.100.1"), "198.51.100.1")
+        cfg = B.load_config()
+        a = B.admit(None, B.clean_ip("2001:db8::1", ""), cfg)
+        b = B.admit(None, B.clean_ip("2001:db8::ffff", ""), cfg)
+        self.assertEqual(a.ip_hash, b.ip_hash)                       # gleiche Netzadresse → gleicher Zähler
+
+
+class TestVerfuegbarkeit(Base):
+    def test_gleichzeitige_fragen_sind_begrenzt_und_ueberlauf_zaehlt_nicht(self):
+        started, release = threading.Event(), threading.Event()
+
+        class Blocking(Mock):
+            def complete(self, *a, **k):
+                started.set()
+                release.wait(5)
+                return super().complete(*a, **k)
+        m = Blocking([text("Siehe Tabelle.")] * 5)
+        S.set_provider(m)
+        first = {}
+        t = threading.Thread(target=lambda: first.update(S.handle_question("Frage", None, "1.1.1.1", frames=frames)))
+        t.start()
+        self.assertTrue(started.wait(5))
+        out = S.handle_question("Frage", None, "1.1.1.2", frames=frames)       # gleichzeitig: AI_CHAT_CONCURRENCY=1
+        self.assertEqual(out["status"], 503)
+        self.assertEqual(out["body"]["kind"], "busy")
+        self.assertEqual(B.usage_snapshot()["questions"], 1)                   # Überlauf wurde weder gezählt noch aufgerufen
+        release.set()
+        t.join(10)
+        self.assertEqual(first["status"], 200)
+        self.assertEqual(S.handle_question("Frage", None, "1.1.1.3", frames=frames)["status"], 200)     # danach wieder frei
+
+    def test_gesamtfrist_je_frage(self):
+        os.environ["AI_CHAT_DEADLINE"] = "0.01"                        # sofort überschritten: nach dem ersten Aufruf keine weiteren
+        m = Mock([tool_use(spec_pro_kopf()), text("x")])
+        S.set_provider(m)
+        time.sleep(0)
+        out = S.handle_question("Asylkosten pro Kopf?", None, "1.1.1.1", frames=frames)
+        self.assertEqual(len(m.calls), 1)
+        self.assertEqual(out["status"], 200)
+
+
+class TestHaertung(Base):
+    def test_abfragefehler_ohne_500_und_mit_kosten_im_protokoll(self):
+        evil = [{"queries": [{"dataset": "bevoelkerung", "filters": {"Jahr": [1e999]}}]},          # JSON 1e999 → inf → OverflowError
+                {"queries": [{"dataset": "bevoelkerung", "filters": {"Jahr": [[1]]}}]},               # Liste statt Zahl → TypeError
+                {"queries": [{"dataset": "bevoelkerung", "group_by": [["Jahr"]]}]},
+                {"queries": [{"id": ["x"], "dataset": "bevoelkerung"}], "output": [["a"]]}]
+        for i, spec in enumerate(evil):
+            m = Mock([tool_use(spec, f"t{i}"), text("Ich kann die Abfrage nicht ausführen.")])
+            S.set_provider(m)
+            out = S.handle_question("Frage", None, f"1.1.2.{i}", frames=frames)
+            self.assertEqual(out["status"], 200, msg=str(spec))
+            self.assertIn("FEHLER", json.dumps(m.calls[1]["messages"], ensure_ascii=False))
+        with B._Tx() as c:
+            self.assertTrue(all(r["cost_urp"] > 0 for r in c.execute("SELECT cost_urp FROM chat_log")))
+
+    def test_beschriftungen_vom_modell_werden_bereinigt(self):
+        spec = spec_pro_kopf()
+        spec["queries"][0]["label"] = "Kosten <a href=\"https://evil.example\">Klick</a> & mehr"
+        spec["derive"][0]["label"] = "<img src=x onerror=alert(1)>Je Kopf"
+        spec["title"] = "<b>Titel</b>"
+        r = D.execute(spec, frames)
+        for txt in r.values + [r.title] + [x for x in r.formulas]:
+            self.assertNotIn("<", txt)
+            self.assertNotIn(">", txt)
+        self.assertEqual(D.safe_text("a<b>c&d\"e"), "abcde")
+
+    def test_plotly_texte_werden_im_frontend_maskiert(self):
+        js = open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "assets", "chat.js"), encoding="utf-8").read()
+        self.assertIn("&lt;", js)
+        self.assertIn("pt(s.name)", js)
+        self.assertIn("x: c.x.map(pt)", js)
+        self.assertIn("pt(c.yTitle", js)
+
+    def test_body_grenze_cookie_secure_und_localhost_origin(self):
+        D_get = D.get_frame
+        D.get_frame = frames
+        try:
+            from flask import Flask
+            app = Flask("t")
+            S.register(app)
+            self.assertEqual(app.config["MAX_CONTENT_LENGTH"], 1_000_000)
+            c = app.test_client()
+            S.set_provider(Mock([text("x")] * 5))
+            H = {"X-Requested-With": "dli-chat", "X-Forwarded-For": "203.0.113.5"}
+            import io
+            body = b'{"q":"' + b"a" * 6000 + b'"}'
+            r = c.post("/_chat/ask", input_stream=io.BytesIO(body), content_type="application/json", headers=H)    # ohne Content-Length (wie chunked)
+            self.assertEqual(r.status_code, 400)
+            # localhost-Origin nur mit AI_CHAT_ALLOW_LOCALHOST=1
+            self.assertEqual(c.post("/_chat/ask", json={"q": "x"}, headers={"Origin": "http://127.0.0.1:8050", "X-Forwarded-For": "203.0.113.5"}).status_code, 403)
+            os.environ["AI_CHAT_ALLOW_LOCALHOST"] = "1"
+            ok = c.post("/_chat/ask", json={"q": "Hallo"}, headers={"Origin": "http://127.0.0.1:8050", "X-Forwarded-For": "203.0.113.5"})
+            self.assertEqual(ok.status_code, 200)
+            self.assertIn("Secure", ok.headers.get("Set-Cookie", ""))                                    # auch ohne X-Forwarded-Proto
+        finally:
+            D.get_frame = D_get
+
+    def test_tagessalz_ist_zufaellig_und_wird_nach_2_tagen_geloescht(self):
+        cfg = B.load_config()
+        d0 = 1_800_000_000.0
+        h0 = B.ip_hash("203.0.113.5", d0)
+        self.assertEqual(h0, B.ip_hash("203.0.113.5", d0 + 60))               # gleicher Tag: stabil
+        self.assertNotEqual(h0, B.ip_hash("203.0.113.5", d0 + 86400))          # anderer Tag: nicht verknüpfbar
+        B.prune(cfg, d0 + 3 * 86400)
+        with B._Tx() as c:
+            days = [r["day"] for r in c.execute("SELECT day FROM chat_salt")]
+        self.assertNotIn(B._day(d0), days)                                      # altes Salz weg: der Hash lässt sich nicht mehr nachrechnen
+        self.assertNotEqual(h0, B.ip_hash("203.0.113.5", d0))
+
+    def test_prune_beim_ersten_zugriff_des_tages_und_vacuum_montags(self):
+        cfg = B.load_config()
+        d0 = 1_800_000_000.0
+        adm = B.admit(None, "3.3.3.3", cfg, d0)
+        B.log_question(adm, "alte Frage", "ok", 0, d0 - 40 * 86400)
+        B.admit(None, "3.3.3.4", cfg, d0 + 86400)                                # neuer Tag → _maybe_prune
+        with B._Tx() as c:
+            self.assertEqual(c.execute("SELECT COUNT(*) FROM chat_log WHERE q = 'alte Frage'").fetchone()[0], 0)
+        monday = 1_801_440_000.0
+        self.assertEqual(B._day(monday - monday % 86400 + 0)[:2], "20")
+        import datetime as dt
+        m = dt.datetime(2027, 1, 4, 12, tzinfo=dt.timezone.utc).timestamp()      # ein Montag
+        self.assertEqual(dt.datetime.fromtimestamp(m, dt.timezone.utc).weekday(), 0)
+        self.assertTrue(B.prune(cfg, m)["vacuum"])
+        self.assertFalse(B.prune(cfg, m)["vacuum"])                              # nur einmal je Tag
+
+    def test_secret_race_und_leere_datei(self):
+        os.environ.pop("AI_CHAT_SECRET", None)
+        path = os.path.join(os.path.dirname(B.db_path()), "chat_secret")
+        open(path, "wb").close()                                                  # leere Altlast darf nicht als Schlüssel gelten
+        results, errors = [], []
+
+        def w():
+            try:
+                results.append(B.secret())
+            except Exception as e:
+                errors.append(e)
+        ts = [threading.Thread(target=w) for _ in range(12)]
+        [t.start() for t in ts]
+        [t.join() for t in ts]
+        self.assertEqual(errors, [])
+        self.assertEqual(len(set(results)), 1)
+        self.assertGreaterEqual(len(results[0]), 32)
 
 
 if __name__ == "__main__":

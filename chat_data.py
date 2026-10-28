@@ -343,6 +343,14 @@ def norm(s) -> str:
     return s.replace("ß", "ss")
 
 
+_SAFE = re.compile(r"[^\w .,()%/:+\-·–]")
+
+
+def safe_text(s, n: int = 70) -> str:
+    """Vom Modell gelieferte Beschriftungen (label, title, id): nur harmlose Zeichen. Plotly rendert Pseudo-HTML (<a href=…>), das darf nie ankommen."""
+    return _SAFE.sub("", str(s))[:n].strip()
+
+
 def _resolve(df: pd.DataFrame, dim: str, wanted) -> list:
     """Wunschwerte → tatsächliche Werte; exakt (normalisiert), sonst eindeutige Teilzeichenkette; sonst QueryError mit den gültigen Werten."""
     if not isinstance(wanted, list):
@@ -358,7 +366,7 @@ def _resolve(df: pd.DataFrame, dim: str, wanted) -> list:
         if dim == "Jahr":
             try:
                 out.append(int(w))
-            except (TypeError, ValueError):
+            except (TypeError, ValueError, OverflowError):
                 raise QueryError(f"Jahr muss eine ganze Zahl sein: {str(w)[:20]!r}")
             continue
         n = norm(w)
@@ -474,7 +482,7 @@ def _to_base(s: Series) -> Series:
 
 
 def derive(op: str, a: Series, b: Series | None, spec: dict) -> Series:
-    label = str(spec.get("label") or f"{op}")[:70]
+    label = safe_text(spec.get("label") or f"{op}")
     if op in ("ratio", "diff", "sum"):
         if b is None:
             raise QueryError(f"{op} braucht a und b")
@@ -561,12 +569,12 @@ def execute(spec: dict, frames: Callable = get_frame) -> Result:
     series: dict = {}
     sources, notes, formulas = [], [], []
     for i, q in enumerate(queries):
-        qid = str(q.get("id") or f"q{i + 1}")[:12] if isinstance(q, dict) else f"q{i + 1}"
+        qid = (safe_text(q.get("id"), 12) or f"q{i + 1}") if isinstance(q, dict) else f"q{i + 1}"
         if qid in series:
             raise QueryError(f"doppelte id {qid}")
         df = run_query(q, frames)
         d = registry()[q["dataset"]]
-        label = str(q.get("label") or re.split(r" nach | \(|, ", d.title)[0])[:70]
+        label = safe_text(q.get("label") or re.split(r" nach | \(|, ", d.title)[0])
         series[qid] = Series(df, d.unit, label, d.key, d.scale, d.base_unit)
         if (d.source, d.source_url) not in sources:
             sources.append((d.source, d.source_url))
@@ -581,7 +589,7 @@ def execute(spec: dict, frames: Callable = get_frame) -> Result:
     for j, dv in enumerate(der):
         if not isinstance(dv, dict):
             raise QueryError("derive-Eintrag muss ein Objekt sein")
-        did = str(dv.get("id") or f"d{j + 1}")[:12]
+        did = safe_text(dv.get("id"), 12) or f"d{j + 1}"
         if did in series:
             raise QueryError(f"doppelte id {did}")
         a = series.get(dv.get("a"))
@@ -628,7 +636,7 @@ def execute(spec: dict, frames: Callable = get_frame) -> Result:
                 v = v.item()
             row[c] = v
         rows.append(row)
-    return Result(dims_common, names, units, rows, sources, notes, formulas, str(spec.get("title") or "")[:120])
+    return Result(dims_common, names, units, rows, sources, notes, formulas, safe_text(spec.get("title") or "", 120))
 
 
 # ── Formatierung ──────────────────────────────────────────────────────────────

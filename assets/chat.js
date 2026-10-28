@@ -41,13 +41,16 @@
         return wrap;
     }
 
+    // Plotly rendert Pseudo-HTML (<a href=…>) in Beschriftungen: Zeichen maskieren, damit nichts als Tag ankommt
+    function pt(s) { return String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;"); }
+
     function chart(c) {
         var div = mk("div", "chat-chart");
         var tries = 0;
         (function draw() {
             if (window.Plotly) {
                 var traces = c.series.map(function (s, i) {
-                    var t = { x: c.x, y: s.y, name: s.name, marker: { color: COLORS[i % COLORS.length] } };
+                    var t = { x: c.x.map(pt), y: s.y, name: pt(s.name), marker: { color: COLORS[i % COLORS.length] } };
                     if (c.type === "line") { t.type = "scatter"; t.mode = "lines+markers"; t.connectgaps = false; } else { t.type = "bar"; }
                     return t;
                 });
@@ -55,7 +58,7 @@
                     paper_bgcolor: "rgba(0,0,0,0)", plot_bgcolor: "rgba(0,0,0,0)", font: { color: "#C9D1D9", size: 12 },
                     margin: { l: 60, r: 10, t: 10, b: 60 }, height: 320, barmode: "group", showlegend: c.series.length > 1,
                     legend: { orientation: "h", y: -0.25 }, xaxis: { type: "category", gridcolor: "#21262D" },
-                    yaxis: { title: { text: c.yTitle || "" }, gridcolor: "#21262D", tickformat: "," }
+                    yaxis: { title: { text: pt(c.yTitle || "") }, gridcolor: "#21262D", tickformat: "," }
                 }, { displayModeBar: false, responsive: true });
             } else if (tries++ < 40) {
                 setTimeout(draw, 250);

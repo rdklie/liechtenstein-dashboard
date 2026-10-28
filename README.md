@@ -233,10 +233,16 @@ schreibgeschützte Verbindung, höchstens 200 Ergebniszeilen), (2) Budgets, (3) 
 | Sitzungsbudget (signiertes Cookie, serverseitig gezählt) | 20 Rappen, 15 Fragen | `AI_CHAT_SESSION_BUDGET_RP`, `AI_CHAT_Q_PER_SESSION` |
 | Tagesbudget je IP-Hash (Cookie löschen umgeht nichts), neue Sitzungen je IP/Tag | 30 Rappen, 5 Sitzungen | `AI_CHAT_IP_DAY_BUDGET_RP`, `AI_CHAT_SESSIONS_PER_IP_DAY` |
 | Rate-Limit je IP / global | 5 je Minute, 30 je Stunde / 200 Fragen je Stunde | `AI_CHAT_IP_PER_MIN`, `AI_CHAT_IP_PER_HOUR`, `AI_CHAT_GLOBAL_PER_HOUR` |
-| Eingabe / Antwort | 500 Zeichen / `max_tokens` 800, Verlauf 2 Austausche (serverseitig), höchstens 3 API-Aufrufe je Frage | `AI_CHAT_MAX_INPUT_CHARS`, `AI_CHAT_MAX_TOKENS`, `AI_CHAT_HISTORY` |
+| Eingabe / Antwort | 500 Zeichen / `max_tokens` 800, Verlauf 2 Austausche (serverseitig), höchstens 3 API-Aufrufe und 40 s je Frage | `AI_CHAT_MAX_INPUT_CHARS`, `AI_CHAT_MAX_TOKENS`, `AI_CHAT_HISTORY`, `AI_CHAT_DEADLINE` |
+| Parallelität | 1 Chat-Frage je gunicorn-Prozess (Chat und Dashboard teilen sich 2 × 2 Threads); Überlauf = 503 «ausgelastet», ungezählt | `AI_CHAT_CONCURRENCY` |
+
+Harte Grenzen im Code (die Umgebung kann nur senken): Monat 1000 Rappen, Sitzung 20 Rappen, IP-Tag 30 Rappen; intern gelten 95 % davon. Modell und Preise stehen in der Tabelle `PRICES` in `chat_budget.py`:
+unbekanntes Modell = Funktion aus, Preise nie unter dem Tabellenwert. Ein anderes Modell erst dort eintragen (mit dem Preis aus der Anthropic-Preisseite).
 
 Vor jedem API-Aufruf wird der **schlimmste Fall** (geschätzte Eingabe-Tokens + `max_tokens` zum Ausgabepreis) gleichzeitig auf Monat, Sitzung und IP-Tag reserviert; reicht eines nicht, gibt es keinen Aufruf.
-Danach ersetzen die tatsächlichen Kosten aus den `usage`-Angaben der API-Antwort die Reservierung. Fehler des Anbieters (429/5xx, Verbindung) kosten nichts; bei einer Zeitüberschreitung wird der schlimmste Fall zur Sicherheit gezählt.
+Danach ersetzen die tatsächlichen Kosten aus den `usage`-Angaben der API-Antwort die Reservierung; fehlen oder fälschen diese (leer, Null, Text), gilt der schlimmste Fall, bei `max_tokens` mindestens die volle Ausgabe.
+Fail closed: Nach aufgebauter Verbindung gilt jeder Fehler (Lese-Timeout, Abbruch, 5xx, Nicht-JSON-Antwort eines Zwischenproxys) als möglicherweise abgerechnet; kostenlos nur Verbindungsaufbau-Fehler und HTTP 400/401/403/429/529 mit gültigem JSON-Fehler.
+Jede Reservierung trägt einen Zeitstempel; bleibt eine liegen (Absturz, Neustart), wird sie nach 3 Minuten als Kosten verbucht, nie freigegeben (der Aufruf könnte stattgefunden haben).
 Preise: Haiku 5.5 kostet laut Preisseite von Anthropic 0.10 USD (Eingabe) bzw. 0.50 USD (Ausgabe) je Million Token; konfiguriert als µRappen je Token (`AI_CHAT_PRICE_IN_URP=10`, `AI_CHAT_PRICE_OUT_URP=50`), gerechnet mit 1 CHF = 1 USD, also bewusst grosszügig.
 Wer das Modell oder die Preise ändert, passt diese Variablen an (`AI_CHAT_MODEL`). Optional: `AI_CHAT_EFFORT` (Standard `low`), `AI_CHAT_THINKING=disabled`.
 
@@ -252,8 +258,12 @@ nano ~/daten-li/.env        # AI_CHAT_API_KEY=... eintragen und AI_CHAT_ENABLED=
 **Monitoring:** `~/daten-li/data/chat_usage.json` (atomar nach jeder Frage und täglich vom Worker geschrieben), Felder `month`, `enabled`, `budget_rp`, `spent_rp`, `reserved_rp`, `percent`, `warn_percent`, `state` (`ok` | `warn` ab 80 % | `exhausted`),
 `calls`, `questions`, `model`, `updated`. Ein Monitor mit Schreibrecht kann zusätzlich `chat.disabled` anlegen.
 
-**Datenschutz:** IP-Adressen werden nie im Klartext gespeichert (HMAC mit Tagessalz, am Folgetag nicht verknüpfbar; hinter LiteSpeed zählt der rechte `X-Forwarded-For`-Eintrag). Fragen werden gekürzt (300 Zeichen) mit Zeitstempel, IP-Hash, Kurz-Sitzungs-ID, Ergebnis und Kosten
-höchstens 30 Tage protokolliert (Worker löscht täglich). Frage und Abfrageergebnis gehen an Anthropic (USA); Hinweis im Tab, in der Fusszeile und auf «Datenquellen».
+**IP-Ermittlung:** Hinter LiteSpeed steht die Client-IP rechts in `X-Forwarded-For`, der Proxy dupliziert aber mitgeschickte Einträge (gemessen: ohne eigenen Header 1 Eintrag, mit gefälschtem 3, mit zwei gefälschten 5). Vertraut wird deshalb nur bei **genau einem** Eintrag;
+sonst (gefälscht, fehlend, direkter Zugriff auf den lokalen Port) landet die Anfrage in einem gemeinsamen «unsicheren» Topf mit strengen Limits (3 je Minute, 5 Rappen je Tag). `/_chat/status` zeigt `ip_trusted`/`xff_hops`. Optional `AI_CHAT_PROXY_SECRET`: dann muss zusätzlich der Header
+`X-Dli-Proxy` stimmen, den nur der Proxy setzt (siehe unten). IPv6 zählt je /64, IPv4-in-IPv6 als IPv4.
+
+**Datenschutz:** IP-Adressen werden nie im Klartext gespeichert (HMAC mit zufälligem Tagessalz, das nach 2 Tagen gelöscht wird; danach sind alte Hashes nicht mehr verknüpf- oder nachrechenbar). Fragen werden gekürzt (300 Zeichen) mit Zeitstempel, IP-Hash, Kurz-Sitzungs-ID, Ergebnis und Kosten
+höchstens 30 Tage protokolliert (Bereinigung beim ersten Zugriff des Tages und täglich im Worker, `secure_delete`, montags VACUUM). Frage und Abfrageergebnis gehen an Anthropic (USA); Hinweis im Tab, in der Fusszeile und auf «Datenquellen».
 
 **Datensätze (Whitelist):** Wohnbevölkerung, sechs Lohn-Sichten (Branche, Wohnsitz, Alter, Voll-/Teilzeit, Staatsbürgerschaft, Unternehmensgrösse), Kosten Asylwesen (Landesrechnung Konto 590) und je Kopf, Asyl-Bestand, Ausgaben des Staates nach Funktion (501.031, auch
 «Soziale Sicherung»; Cache-Schlüssel `edu:spend_all`, der Worker spiegelt ihn wöchentlich), Polizei-Kennzahlen, Weltbank-Indikatoren, Klima je Gemeinde, Tourismus, PISA, Arbeitslosenquote, Beschäftigte. **Nicht vorhanden:** Sozialhilfe, AHV/IV-Renten und Krankenkassenprämien als eigene Reihen,

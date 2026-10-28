@@ -4,12 +4,17 @@ chat_budget.py — Konfiguration, Kostenbudgets, Rate-Limits und Protokoll für 
 Eigene SQLite-Datei (chat.sqlite neben der Hauptdatenbank), damit die Dashboard-Daten unberührt bleiben.
 Beträge werden als ganze Zahlen in µRappen geführt (1 Rappen = 1'000'000 µRp), keine Fliesskommafehler.
 
-Mehrstufig und atomar (BEGIN IMMEDIATE, auch über mehrere gunicorn-Prozesse):
-  * VOR jedem API-Aufruf wird der schlimmste Fall (geschätzte Eingabe-Tokens + max_tokens zum Ausgabepreis) gleichzeitig gegen Monats-, Sitzungs-
-    und IP-Tagesbudget reserviert; reicht eines nicht, wird nichts aufgerufen. Nach der Antwort wird die Reservierung durch die tatsächlichen Kosten
-    aus den usage-Angaben der API ersetzt.
+Mehrstufig und atomar (BEGIN IMMEDIATE, auch über mehrere gunicorn-Prozesse), im Zweifel zu Lasten des Budgets («fail closed»):
+  * VOR jedem API-Aufruf wird der schlimmste Fall (konservativ geschätzte Eingabe-Tokens + max_tokens zum Ausgabepreis) gleichzeitig gegen Monats-,
+    Sitzungs- und IP-Tagesbudget reserviert (intern gelten nur 95 % der Budgets); reicht eines nicht, wird nichts aufgerufen. Nach der Antwort ersetzen
+    die tatsächlichen Kosten aus den usage-Angaben die Reservierung; fehlen oder fälschen diese Angaben, gilt der schlimmste Fall.
+  * Reservierungen tragen einen Zeitstempel. Bleibt eine liegen (Absturz, Prozess-Kill), wird sie nach 3 Minuten als verbrauchte Kosten verbucht
+    (nicht freigegeben: der Aufruf könnte stattgefunden haben).
+  * Modell und Preise stehen in einer Preistabelle im Code (PRICES): unbekanntes Modell = Funktion aus; Preise nie unter dem Tabellenwert; die Budgets
+    sind durch Konstanten nach oben begrenzt (MAX_*), die Umgebung kann sie nur senken.
   * Zusätzlich: Fragen je Sitzung, neue Sitzungen je IP und Tag, Anfragen je IP und Minute/Stunde, globale Anfragen je Stunde.
-IP-Adressen werden nie im Klartext gespeichert: HMAC mit Tagessalz → am Folgetag nicht mehr verknüpfbar. Fragen werden gekürzt höchstens 30 Tage protokolliert.
+IP-Adressen werden nie im Klartext gespeichert: HMAC mit einem zufälligen Tagessalz, das nach 2 Tagen gelöscht wird (danach nicht mehr verknüpfbar).
+IPv6 zählt je /64, IPv4-in-IPv6 als IPv4. Fragen werden gekürzt höchstens 30 Tage protokolliert.
 """
 
 import hashlib
@@ -25,6 +30,18 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 
 URP = 1_000_000                       # µRappen je Rappen
+
+# Preise in µRappen je Token: Haiku 5.5 kostet laut Preisseite von Anthropic 0.10 USD (Eingabe) / 0.50 USD (Ausgabe) je Million Token;
+# mit 1 CHF = 1 USD gerechnet (bewusst grosszügig). Unbekanntes Modell = Funktion aus.
+PRICES = {"claude-haiku-5-5": (10.0, 50.0)}
+MAX_MONTH_RP = 1000.0                 # harte Obergrenzen (die Umgebung kann nur senken)
+MAX_SESSION_RP = 20.0
+MAX_IP_DAY_RP = 30.0
+LIMIT_FACTOR = 0.95                   # intern gelten 95 % der nominellen Budgets
+RESERVATION_TTL = 180                 # Sekunden, danach wird eine liegengebliebene Reservierung als Kosten verbucht
+EST_BYTES_PER_TOKEN = 1.5             # sehr konservativ (Emoji/CJK/JSON-Zahlen); dazu Werkzeug-Overhead und Faktor 1.3
+EST_OVERHEAD_TOKENS = 600
+EST_FACTOR = 1.3
 
 
 class ChatError(Exception):
@@ -91,7 +108,8 @@ def env(name: str, default: str = "") -> str:
 
 def _num(name: str, default: float) -> float:
     try:
-        return float(env(name, str(default)))
+        v = float(env(name, str(default)))
+        return v if v == v and abs(v) != float("inf") else float(default)
     except ValueError:
         return float(default)
 
@@ -104,8 +122,8 @@ class Config:
     month_budget_urp: int
     session_budget_urp: int
     ip_day_budget_urp: int
-    price_in_urp: float          # µRp je Eingabe-Token
-    price_out_urp: float         # µRp je Ausgabe-Token
+    price_in_urp: float          # µRp je Eingabe-Token (nie unter dem Tabellenwert)
+    price_out_urp: float         # µRp je Ausgabe-Token (nie unter dem Tabellenwert)
     max_tokens: int
     max_input_chars: int
     history: int
@@ -120,52 +138,91 @@ class Config:
     effort: str
     thinking: str
     max_api_calls: int
+    concurrency: int             # gleichzeitige Chat-Fragen je Prozess (die Seite teilt sich dieselben Threads)
+    deadline: float              # Gesamtzeit je Frage in Sekunden
+    proxy_secret: str            # optional: geheimer Header, den der Proxy setzt (X-Dli-Proxy)
+    disabled_reason: str = ""
 
 
 def load_config() -> Config:
     """Liest die Konfiguration bei jedem Aufruf (Umgebung bzw. .env): der Kill-Switch wirkt ohne Neustart."""
     on = env("AI_CHAT_ENABLED", "0").strip().lower() in ("1", "true", "yes", "on")
+    reason = ""
     if os.path.exists(os.path.join(_base_dir(), "data", "chat.disabled")):
-        on = False
+        on, reason = False, "chat.disabled"
+    model = env("AI_CHAT_MODEL", "claude-haiku-5-5").strip()
+    table = PRICES.get(model)
+    if table is None:
+        on, reason = False, f"unbekanntes Modell {model!r}: Preis fehlt in PRICES"
+        table = (max(p[0] for p in PRICES.values()), max(p[1] for p in PRICES.values()))
     return Config(
         enabled=on,
         api_key=env("AI_CHAT_API_KEY"),
-        model=env("AI_CHAT_MODEL", "claude-haiku-5-5"),
-        month_budget_urp=int(_num("AI_CHAT_MONTH_BUDGET_RP", 1000) * URP),
-        session_budget_urp=int(_num("AI_CHAT_SESSION_BUDGET_RP", 20) * URP),
-        ip_day_budget_urp=int(_num("AI_CHAT_IP_DAY_BUDGET_RP", 30) * URP),
-        # Haiku 5.5: 0.10 USD / 0.50 USD je Million Token (Preisseite der Anthropic-Dokumentation); mit Kurs 1 CHF = 1 USD bewusst grosszügig gerechnet
-        price_in_urp=_num("AI_CHAT_PRICE_IN_URP", 10.0),
-        price_out_urp=_num("AI_CHAT_PRICE_OUT_URP", 50.0),
-        max_tokens=int(_num("AI_CHAT_MAX_TOKENS", 800)),         # inkl. Denkanteil (Haiku 5.5 denkt standardmässig adaptiv) und Werkzeug-JSON
-        max_input_chars=int(_num("AI_CHAT_MAX_INPUT_CHARS", 500)),
-        history=int(_num("AI_CHAT_HISTORY", 2)),
+        model=model,
+        month_budget_urp=int(max(0.0, min(_num("AI_CHAT_MONTH_BUDGET_RP", MAX_MONTH_RP), MAX_MONTH_RP)) * URP),
+        session_budget_urp=int(max(0.0, min(_num("AI_CHAT_SESSION_BUDGET_RP", MAX_SESSION_RP), MAX_SESSION_RP)) * URP),
+        ip_day_budget_urp=int(max(0.0, min(_num("AI_CHAT_IP_DAY_BUDGET_RP", MAX_IP_DAY_RP), MAX_IP_DAY_RP)) * URP),
+        price_in_urp=max(_num("AI_CHAT_PRICE_IN_URP", table[0]), table[0]),
+        price_out_urp=max(_num("AI_CHAT_PRICE_OUT_URP", table[1]), table[1]),
+        max_tokens=int(min(max(_num("AI_CHAT_MAX_TOKENS", 800), 100), 2000)),    # inkl. Denkanteil (Haiku 5.5 denkt standardmässig adaptiv) und Werkzeug-JSON
+        max_input_chars=int(min(max(_num("AI_CHAT_MAX_INPUT_CHARS", 500), 20), 1000)),
+        history=int(min(max(_num("AI_CHAT_HISTORY", 2), 0), 4)),
         questions_per_session=int(_num("AI_CHAT_Q_PER_SESSION", 15)),
         ip_per_min=int(_num("AI_CHAT_IP_PER_MIN", 5)),
         ip_per_hour=int(_num("AI_CHAT_IP_PER_HOUR", 30)),
         global_per_hour=int(_num("AI_CHAT_GLOBAL_PER_HOUR", 200)),
         sessions_per_ip_day=int(_num("AI_CHAT_SESSIONS_PER_IP_DAY", 5)),
         warn_pct=_num("AI_CHAT_WARN_PCT", 80),
-        log_days=int(_num("AI_CHAT_LOG_DAYS", 30)),
-        timeout=_num("AI_CHAT_TIMEOUT", 25),
+        log_days=int(min(_num("AI_CHAT_LOG_DAYS", 30), 30)),
+        timeout=min(_num("AI_CHAT_TIMEOUT", 20), 30),
         effort=env("AI_CHAT_EFFORT", "low"),
         thinking=env("AI_CHAT_THINKING", ""),
-        max_api_calls=int(_num("AI_CHAT_MAX_API_CALLS", 3)),
+        max_api_calls=int(min(_num("AI_CHAT_MAX_API_CALLS", 3), 3)),
+        concurrency=int(max(1, _num("AI_CHAT_CONCURRENCY", 1))),
+        deadline=min(_num("AI_CHAT_DEADLINE", 40), 60),
+        proxy_secret=env("AI_CHAT_PROXY_SECRET"),
+        disabled_reason=reason,
     )
 
 
 def cost_urp(cfg: Config, usage: dict) -> int:
-    """Tatsächliche Kosten aus der usage-Angabe der API-Antwort (aufgerundet). Cache-Schreibzugriffe zu 1.25×, -Lesezugriffe zu 0.1× des Eingabepreises."""
+    """Kosten aus einer gültigen usage-Angabe (aufgerundet). Cache-Schreibzugriffe zu 1.25×, -Lesezugriffe zu 0.1× des Eingabepreises."""
     u = usage or {}
     tin = int(u.get("input_tokens") or 0) + 1.25 * int(u.get("cache_creation_input_tokens") or 0) + 0.1 * int(u.get("cache_read_input_tokens") or 0)
     tout = int(u.get("output_tokens") or 0)
     return int(-(-(tin * cfg.price_in_urp + tout * cfg.price_out_urp) // 1))
 
 
-def worst_case_urp(cfg: Config, input_chars: int) -> int:
-    """Schlimmster Fall vor dem Aufruf: Eingabe grosszügig als 1 Token je 2.5 Zeichen (+200) und die volle max_tokens-Ausgabe."""
-    est_in = int(input_chars / 2.5) + 200
+def _is_count(v) -> bool:
+    return isinstance(v, int) and not isinstance(v, bool) and v >= 0
+
+
+def charge_urp(cfg: Config, resp: dict, worst_urp: int) -> int:
+    """Kosten einer API-Antwort, fail closed: fehlt/ist die usage-Angabe unbrauchbar (fehlend, kein Objekt, Zählwerte fehlen/negativ/Text, 0 bei nicht leerem
+    Inhalt), gilt der schlimmste Fall. Bei stop_reason «max_tokens» mindestens max_tokens × Ausgabepreis."""
+    u = resp.get("usage") if isinstance(resp, dict) else None
+    content = resp.get("content") if isinstance(resp, dict) else None
+    if not isinstance(u, dict) or not _is_count(u.get("input_tokens")) or not _is_count(u.get("output_tokens")):
+        return worst_urp
+    if content and (u["input_tokens"] == 0 or u["output_tokens"] == 0):
+        return worst_urp
+    for k in ("cache_creation_input_tokens", "cache_read_input_tokens"):
+        if k in u and not _is_count(u[k]):
+            return worst_urp
+    actual = cost_urp(cfg, u)
+    if resp.get("stop_reason") == "max_tokens":
+        actual = max(actual, int(-(-(cfg.max_tokens * cfg.price_out_urp) // 1)))
+    return actual
+
+
+def worst_case_urp(cfg: Config, input_bytes: int) -> int:
+    """Schlimmster Fall vor dem Aufruf: Eingabe sehr konservativ (UTF-8-Bytes / 1.5 + 600 Tokens Werkzeug-Overhead, × 1.3) und die volle max_tokens-Ausgabe."""
+    est_in = int((input_bytes / EST_BYTES_PER_TOKEN + EST_OVERHEAD_TOKENS) * EST_FACTOR)
     return int(-(-(est_in * cfg.price_in_urp + cfg.max_tokens * cfg.price_out_urp) // 1))
+
+
+def _limit(v: int) -> int:
+    return int(v * LIMIT_FACTOR)
 
 
 # ── Datenbank ─────────────────────────────────────────────────────────────────
@@ -181,6 +238,10 @@ CREATE TABLE IF NOT EXISTS chat_events (ts INTEGER NOT NULL, ip_hash TEXT NOT NU
 CREATE INDEX IF NOT EXISTS ix_chat_events ON chat_events (ts);
 CREATE TABLE IF NOT EXISTS chat_turn (sid TEXT NOT NULL, n INTEGER NOT NULL, q TEXT NOT NULL, a TEXT NOT NULL, PRIMARY KEY (sid, n));
 CREATE TABLE IF NOT EXISTS chat_log (ts INTEGER NOT NULL, ip_hash TEXT NOT NULL, sid TEXT NOT NULL, q TEXT NOT NULL, outcome TEXT NOT NULL, cost_urp INTEGER NOT NULL DEFAULT 0);
+CREATE TABLE IF NOT EXISTS chat_reservation (rid INTEGER PRIMARY KEY AUTOINCREMENT, ts INTEGER NOT NULL, ym TEXT NOT NULL, sid TEXT NOT NULL, day TEXT NOT NULL,
+    ip_hash TEXT NOT NULL, urp INTEGER NOT NULL);
+CREATE TABLE IF NOT EXISTS chat_salt (day TEXT PRIMARY KEY, salt TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS chat_meta (k TEXT PRIMARY KEY, v TEXT NOT NULL);
 """
 _init_done: set = set()
 _init_lock = threading.Lock()
@@ -202,13 +263,18 @@ def connect() -> sqlite3.Connection:
     path = db_path()
     os.makedirs(os.path.dirname(path), exist_ok=True)
     c = sqlite3.connect(path, timeout=15, isolation_level=None)       # Autocommit: Transaktionen explizit per BEGIN IMMEDIATE
-    c.execute("PRAGMA busy_timeout = 15000")
-    c.row_factory = sqlite3.Row
-    with _init_lock:
-        if path not in _init_done:
-            c.execute("PRAGMA journal_mode = WAL")
-            c.executescript(_DDL)
-            _init_done.add(path)
+    try:
+        c.execute("PRAGMA busy_timeout = 15000")
+        c.execute("PRAGMA secure_delete = ON")                        # gelöschte Zeilen (Fragen, Salze) werden überschrieben
+        c.row_factory = sqlite3.Row
+        with _init_lock:
+            if path not in _init_done:
+                c.execute("PRAGMA journal_mode = WAL")
+                c.executescript(_DDL)
+                _init_done.add(path)
+    except Exception:
+        c.close()
+        raise
     return c
 
 
@@ -217,7 +283,11 @@ class _Tx:
         self.c = connect()
 
     def __enter__(self):
-        self.c.execute("BEGIN IMMEDIATE")
+        try:
+            self.c.execute("BEGIN IMMEDIATE")
+        except Exception:
+            self.c.close()                                            # Verbindung nicht offen lassen, wenn BEGIN fehlschlägt (z. B. database is locked)
+            raise
         return self.c
 
     def __exit__(self, et, ev, tb):
@@ -237,39 +307,69 @@ def _ym(now: float) -> str:
 
 
 def secret() -> bytes:
+    """Schlüssel zum Signieren des Sitzungs-Cookies: AI_CHAT_SECRET (vom Deploy in .env erzeugt) oder Datei chat_secret (atomar angelegt, leere Datei verworfen)."""
     s = env("AI_CHAT_SECRET")
     if s:
         return s.encode()
     path = os.path.join(os.path.dirname(db_path()), "chat_secret")
-    try:
-        with open(path, "rb") as f:
-            v = f.read().strip()
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    for _ in range(20):
+        try:
+            with open(path, "rb") as f:
+                v = f.read().strip()
             if v:
                 return v
-    except OSError:
-        pass
-    v = secrets.token_hex(32).encode()
-    os.makedirs(os.path.dirname(path), exist_ok=True)
-    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600) if not os.path.exists(path) else None
-    if fd is not None:
-        with os.fdopen(fd, "wb") as f:
-            f.write(v)
-    else:                                       # parallel von anderem Prozess angelegt
-        with open(path, "rb") as f:
-            v = f.read().strip()
-    return v
+        except OSError:
+            pass
+        tmp = f"{path}.{os.getpid()}.{secrets.token_hex(4)}.tmp"
+        try:
+            fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+            with os.fdopen(fd, "wb") as f:
+                f.write(secrets.token_hex(32).encode())
+            try:
+                os.link(tmp, path)                                    # atomar: schlägt fehl, wenn ein anderer Prozess schneller war
+            except FileExistsError:
+                try:
+                    if os.path.getsize(path) == 0:                    # leere Altlast
+                        os.replace(tmp, path)
+                except OSError:
+                    pass
+            except OSError:
+                os.replace(tmp, path) if not os.path.exists(path) else None
+        finally:
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
+        time.sleep(0.05)
+    raise RuntimeError("chat_secret nicht lesbar")
+
+
+def _salt(day: str) -> bytes:
+    """Zufälliges Tagessalz (nach 2 Tagen gelöscht): Hashes verschiedener Tage lassen sich nicht verknüpfen, auch wenn secret/Datenbank später bekannt werden."""
+    with _Tx() as c:
+        c.execute("INSERT OR IGNORE INTO chat_salt (day, salt) VALUES (?, ?)", (day, secrets.token_hex(16)))
+        return c.execute("SELECT salt FROM chat_salt WHERE day = ?", (day,)).fetchone()["salt"].encode()
 
 
 def ip_hash(ip: str, now: float | None = None) -> str:
     day = _day(now if now is not None else time.time())
-    return hmac.new(secret(), f"{day}|{ip}".encode(), hashlib.sha256).hexdigest()[:20]
+    return hmac.new(_salt(day), ip.encode(), hashlib.sha256).hexdigest()[:20]
 
 
 def clean_ip(candidate: str, fallback: str) -> str:
+    """Gültige IP normalisieren: IPv4-in-IPv6 → IPv4, IPv6 → /64-Netz (sonst lässt sich das Limit mit Milliarden Adressen umgehen)."""
     try:
-        return str(ipaddress.ip_address((candidate or "").strip()))
+        ip = ipaddress.ip_address((candidate or "").strip())
     except ValueError:
-        return fallback or "0.0.0.0"
+        if fallback and fallback != candidate:
+            return clean_ip(fallback, "")
+        return "0.0.0.0"
+    if ip.version == 6:
+        if ip.ipv4_mapped is not None:
+            return str(ip.ipv4_mapped)
+        return str(ipaddress.ip_network(f"{ip}/64", strict=False).network_address) + "/64"
+    return str(ip)
 
 
 # ── Zulassung, Reservierung, Abrechnung ───────────────────────────────────────
@@ -283,11 +383,19 @@ class Admission:
     new_session: bool
 
 
+@dataclass
+class Reservation:
+    rid: int
+    urp: int
+    ym: str = ""
+
+
 def admit(sid: str | None, ip: str, cfg: Config, now: float | None = None) -> Admission:
     """Prüft Rate-Limits und legt bei Bedarf eine Sitzung an; zählt die Frage. Wirft RateLimited/BudgetExceeded mit freundlicher Meldung."""
     now = time.time() if now is None else now
     day, ym = _day(now), _ym(now)
     ih = ip_hash(ip, now)
+    _maybe_prune(cfg, now, day)
     with _Tx() as c:
         n_min = c.execute("SELECT COUNT(*) FROM chat_events WHERE ip_hash = ? AND ts > ?", (ih, now - 60)).fetchone()[0]
         if n_min >= cfg.ip_per_min:
@@ -319,32 +427,63 @@ def admit(sid: str | None, ip: str, cfg: Config, now: float | None = None) -> Ad
     return Admission(sid, ih, day, ym, new)
 
 
-def reserve(adm: Admission, worst_urp: int, cfg: Config) -> int:
-    """Reserviert den schlimmsten Fall atomar auf Monat, Sitzung und IP-Tag; sonst BudgetExceeded (es wird nichts aufgerufen)."""
+def _sweep(c, now: float):
+    """Liegengebliebene Reservierungen (älter als RESERVATION_TTL) als verbrauchte Kosten verbuchen – nicht freigeben: der Aufruf könnte stattgefunden haben."""
+    for r in c.execute("SELECT * FROM chat_reservation WHERE ts < ?", (int(now - RESERVATION_TTL),)).fetchall():
+        c.execute("UPDATE chat_month SET reserved_urp = MAX(0, reserved_urp - ?), spent_urp = spent_urp + ?, calls = calls + 1 WHERE ym = ?", (r["urp"], r["urp"], r["ym"]))
+        c.execute("UPDATE chat_session SET reserved_urp = MAX(0, reserved_urp - ?), spent_urp = spent_urp + ? WHERE sid = ?", (r["urp"], r["urp"], r["sid"]))
+        c.execute("UPDATE chat_ip SET reserved_urp = MAX(0, reserved_urp - ?), spent_urp = spent_urp + ? WHERE day = ? AND ip_hash = ?", (r["urp"], r["urp"], r["day"], r["ip_hash"]))
+        c.execute("DELETE FROM chat_reservation WHERE rid = ?", (r["rid"],))
+
+
+def reserve(adm: Admission, worst_urp: int, cfg: Config, now: float | None = None) -> Reservation:
+    """Reserviert den schlimmsten Fall atomar auf Monat, Sitzung und IP-Tag (intern 95 % der Budgets); sonst BudgetExceeded (es wird nichts aufgerufen)."""
+    now = time.time() if now is None else now
     with _Tx() as c:
+        _sweep(c, now)
         m = c.execute("SELECT spent_urp + reserved_urp AS u FROM chat_month WHERE ym = ?", (adm.ym,)).fetchone()
         s = c.execute("SELECT spent_urp + reserved_urp AS u FROM chat_session WHERE sid = ?", (adm.sid,)).fetchone()
         i = c.execute("SELECT spent_urp + reserved_urp AS u FROM chat_ip WHERE day = ? AND ip_hash = ?", (adm.day, adm.ip_hash)).fetchone()
-        if m is None or m["u"] + worst_urp > cfg.month_budget_urp:
+        if m is None or m["u"] + worst_urp > _limit(cfg.month_budget_urp):
             raise BudgetExceeded("Das Kontingent für diesen Monat ist erschöpft. Die Funktion steht ab dem nächsten Monat wieder zur Verfügung.", "month")
-        if s is None or s["u"] + worst_urp > cfg.session_budget_urp:
+        if s is None or s["u"] + worst_urp > _limit(cfg.session_budget_urp):
             raise BudgetExceeded(f"Das Kontingent dieser Sitzung ({cfg.session_budget_urp / URP:g} Rappen) ist erschöpft. Bitte später eine neue Sitzung beginnen.", "session")
-        if i is None or i["u"] + worst_urp > cfg.ip_day_budget_urp:
+        if i is None or i["u"] + worst_urp > _limit(cfg.ip_day_budget_urp):
             raise BudgetExceeded("Das Tageskontingent für diese Verbindung ist erschöpft. Bitte morgen wieder versuchen.", "ip_day")
         c.execute("UPDATE chat_month SET reserved_urp = reserved_urp + ? WHERE ym = ?", (worst_urp, adm.ym))
         c.execute("UPDATE chat_session SET reserved_urp = reserved_urp + ? WHERE sid = ?", (worst_urp, adm.sid))
         c.execute("UPDATE chat_ip SET reserved_urp = reserved_urp + ? WHERE day = ? AND ip_hash = ?", (worst_urp, adm.day, adm.ip_hash))
-    return worst_urp
+        cur = c.execute("INSERT INTO chat_reservation (ts, ym, sid, day, ip_hash, urp) VALUES (?, ?, ?, ?, ?, ?)", (int(now), adm.ym, adm.sid, adm.day, adm.ip_hash, worst_urp))
+        return Reservation(cur.lastrowid, worst_urp, adm.ym)
 
 
-def settle(adm: Admission, reserved_urp: int, actual_urp: int, called: bool = True):
-    """Ersetzt die Reservierung durch die tatsächlichen Kosten (actual_urp; bei nicht erfolgtem Aufruf 0)."""
+def settle(adm: Admission, res, actual_urp: int, called: bool = True):
+    """Ersetzt die Reservierung durch die tatsächlichen Kosten. War sie schon als verbraucht verbucht (Sweep), wird nur ein Mehrbetrag nachgebucht."""
+    rid, urp = (res.rid, res.urp) if isinstance(res, Reservation) else (None, int(res))
     with _Tx() as c:
+        row = c.execute("SELECT rid FROM chat_reservation WHERE rid = ?", (rid,)).fetchone() if rid is not None else None
+        if rid is None or row is not None:
+            if row is not None:
+                c.execute("DELETE FROM chat_reservation WHERE rid = ?", (rid,))
+            reserved_delta, spent_delta = urp, actual_urp
+        else:                                                         # bereits vom Sweep als Kosten verbucht
+            reserved_delta, spent_delta = 0, max(0, actual_urp - urp)
         c.execute("UPDATE chat_month SET reserved_urp = MAX(0, reserved_urp - ?), spent_urp = spent_urp + ?, calls = calls + ? WHERE ym = ?",
-                  (reserved_urp, actual_urp, 1 if called else 0, adm.ym))
-        c.execute("UPDATE chat_session SET reserved_urp = MAX(0, reserved_urp - ?), spent_urp = spent_urp + ? WHERE sid = ?", (reserved_urp, actual_urp, adm.sid))
+                  (reserved_delta, spent_delta, (1 if called and row is not None else 0), adm.ym))
+        c.execute("UPDATE chat_session SET reserved_urp = MAX(0, reserved_urp - ?), spent_urp = spent_urp + ? WHERE sid = ?", (reserved_delta, spent_delta, adm.sid))
         c.execute("UPDATE chat_ip SET reserved_urp = MAX(0, reserved_urp - ?), spent_urp = spent_urp + ? WHERE day = ? AND ip_hash = ?",
-                  (reserved_urp, actual_urp, adm.day, adm.ip_hash))
+                  (reserved_delta, spent_delta, adm.day, adm.ip_hash))
+
+
+def settle_safe(adm: Admission, res, actual_urp: int, called: bool = True) -> bool:
+    """settle mit Wiederholung bei SQLite-Sperren; scheitert es dennoch, bleibt die Reservierung stehen und wird nach RESERVATION_TTL als Kosten verbucht."""
+    for k in range(4):
+        try:
+            settle(adm, res, actual_urp, called)
+            return True
+        except sqlite3.Error:
+            time.sleep(0.2 * (k + 1))
+    return False
 
 
 def session_left_urp(adm: Admission, cfg: Config) -> int:
@@ -376,8 +515,21 @@ def log_question(adm: Admission, q: str, outcome: str, cost: int, now: float | N
                   (int(now), adm.ip_hash, adm.sid[:8], q[:300], outcome[:60], int(cost)))
 
 
+def _maybe_prune(cfg: Config, now: float, day: str):
+    """Bereinigung beim ersten Zugriff des Tages (zusätzlich zum täglichen Worker); Fehler dürfen eine Frage nie verhindern."""
+    try:
+        with _Tx() as c:
+            r = c.execute("SELECT v FROM chat_meta WHERE k = 'last_prune'").fetchone()
+            if r is not None and r["v"] == day:
+                return
+            c.execute("INSERT OR REPLACE INTO chat_meta (k, v) VALUES ('last_prune', ?)", (day,))
+        prune(cfg, now)
+    except Exception:
+        pass
+
+
 def prune(cfg: Config | None = None, now: float | None = None) -> dict:
-    """Löscht Protokoll/Verlauf nach cfg.log_days, Zähler alter Tage und Sitzungen; ruft der Worker täglich auf."""
+    """Löscht Protokoll/Verlauf nach cfg.log_days, Zähler und Salze alter Tage; montags zusätzlich VACUUM (gelöschte Fragen verschwinden aus der Datei)."""
     cfg = cfg or load_config()
     now = time.time() if now is None else now
     cutoff = now - cfg.log_days * 86400
@@ -389,7 +541,26 @@ def prune(cfg: Config | None = None, now: float | None = None) -> dict:
         b = c.execute("DELETE FROM chat_session WHERE last < ?", (int(cutoff),)).rowcount
         d = c.execute("DELETE FROM chat_ip WHERE day < ?", (_day(now - 3 * 86400),)).rowcount
         e = c.execute("DELETE FROM chat_events WHERE ts < ?", (int(now - 2 * 3600),)).rowcount
-    return {"log": a, "sessions": b, "ip_days": d, "events": e}
+        s2 = c.execute("DELETE FROM chat_salt WHERE day < ?", (_day(now - 2 * 86400),)).rowcount
+        _sweep(c, now)
+    vac = False
+    if datetime.fromtimestamp(now, timezone.utc).weekday() == 0:
+        try:
+            with _Tx() as c:
+                done = c.execute("SELECT v FROM chat_meta WHERE k = 'last_vacuum'").fetchone()
+                skip = done is not None and done["v"] == _day(now)
+                if not skip:
+                    c.execute("INSERT OR REPLACE INTO chat_meta (k, v) VALUES ('last_vacuum', ?)", (_day(now),))
+            if not skip:
+                cx = connect()
+                try:
+                    cx.execute("VACUUM")
+                    vac = True
+                finally:
+                    cx.close()
+        except Exception:
+            pass
+    return {"log": a, "sessions": b, "ip_days": d, "events": e, "salts": s2, "vacuum": vac}
 
 
 # ── Verbrauch für das Monitoring ──────────────────────────────────────────────
@@ -403,7 +574,7 @@ def usage_snapshot(cfg: Config | None = None, now: float | None = None) -> dict:
         m = c.execute("SELECT * FROM chat_month WHERE ym = ?", (ym,)).fetchone()
     used = m["spent_urp"] + m["reserved_urp"]
     pct = round(100.0 * used / cfg.month_budget_urp, 2) if cfg.month_budget_urp else 100.0
-    state = "exhausted" if pct >= 100 else "warn" if pct >= cfg.warn_pct else "ok"
+    state = "exhausted" if pct >= 100 * LIMIT_FACTOR else "warn" if pct >= cfg.warn_pct else "ok"
     return {
         "month": ym, "enabled": cfg.enabled, "budget_rp": round(cfg.month_budget_urp / URP, 4), "spent_rp": round(m["spent_urp"] / URP, 4),
         "reserved_rp": round(m["reserved_urp"] / URP, 4), "percent": pct, "warn_percent": cfg.warn_pct, "state": state,

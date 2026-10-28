@@ -68,15 +68,20 @@ if [ ! -f $B/.env ]; then
   } > $B/.env
   echo ".env angelegt (AI_CHAT_ENABLED=0)"
 fi
+# Cookie-Signierschluessel: einmalig hier erzeugen (nicht erst beim ersten Request, sonst Race zwischen den gunicorn-Prozessen)
+grep -q '^AI_CHAT_SECRET=.' $B/.env || { sed -i '/^AI_CHAT_SECRET=/d' $B/.env; echo "AI_CHAT_SECRET=$(head -c 32 /dev/urandom | od -An -tx1 | tr -d ' \n')" >> $B/.env; echo "AI_CHAT_SECRET erzeugt"; }
 chmod 600 $B/.env
 
-# Crontab: nur den eigenen Block «daten-li» ersetzen (monitor und faktcheck bleiben unveraendert).
-# Schutz 1: schlaegt crontab -l fehl (ausser "no crontab"), wird abgebrochen, statt den Crontab mit nur diesem Block zu ueberschreiben.
+# Crontab: nur den eigenen Block «daten-li» ersetzen (monitor und faktcheck bleiben unveraendert). Der neue Crontab wird in einer Temp-Datei gebaut und
+# VOR dem Einspielen geprueft; bei jeder Auffaelligkeit bleibt der Crontab unveraendert (Abbruch).
+OWN_START='^# >>> daten-li ('
+OWN_END='^# <<< daten-li$'
+# Schutz 1: schlaegt crontab -l fehl (ausser "no crontab"), abbrechen statt mit nur diesem Block zu ueberschreiben.
 CUR=$(crontab -l 2>&1) || case "$CUR" in
   *"no crontab"*) CUR="" ;;
   *) echo "FEHLER: crontab -l fehlgeschlagen ($CUR), Crontab bleibt unveraendert"; exit 3 ;;
 esac
-# Schutz 2: hat der gelesene Crontab weniger Bloecke als die letzte gute Kopie (~/crontab.lastgood, vom Monitor angelegt), abbrechen.
+# Schutz 2: weniger Bloecke als die letzte gute Kopie (~/crontab.lastgood, vom Monitor angelegt) -> abbrechen. Fehlt die Kopie, nur eine Warnung (kein Verlass darauf).
 if [ -f ~/crontab.lastgood ]; then
   OLDN=$(grep -c '^# >>> ' ~/crontab.lastgood || true)
   NEWN=$(printf '%s\n' "$CUR" | grep -c '^# >>> ' || true)
@@ -84,9 +89,27 @@ if [ -f ~/crontab.lastgood ]; then
     echo "FEHLER: Crontab hat nur $NEWN Block/Bloecke, die letzte gute Kopie $OLDN. Crontab bleibt unveraendert (Wiederherstellung: crontab ~/crontab.lastgood)"
     exit 4
   fi
+else
+  echo "WARNUNG: ~/crontab.lastgood fehlt (kein Vergleich mit einer letzten guten Kopie moeglich)"
 fi
-[ -n "$CUR" ] && { printf '%s\n' "$CUR" > ~/crontab.backup; chmod 600 ~/crontab.backup; }
-( printf '%s\n' "$CUR" | sed '/^# >>> daten-li/,/^# <<< daten-li/d'; cat deploy/server/crontab.txt ) | crontab -
+TMPTAB=$(mktemp)
+trap 'rm -f "$TMPTAB"' EXIT
+( printf '%s\n' "$CUR" | sed "/$OWN_START/,/$OWN_END/d"; cat deploy/server/crontab.txt ) > "$TMPTAB"
+# Schutz 3: das ERGEBNIS pruefen (Eingangspruefungen allein genuegen nicht)
+FOREIGN_OLD=$(printf '%s\n' "$CUR" | grep '^# >>> ' | grep -v '^# >>> daten-li ' | sort | tr '\n' '|')
+FOREIGN_NEW=$(grep '^# >>> ' "$TMPTAB" | grep -v '^# >>> daten-li ' | sort | tr '\n' '|')
+[ -s "$TMPTAB" ]                                                  || { echo "FEHLER: neuer Crontab ist leer, Crontab bleibt unveraendert"; exit 5; }
+[ "$(grep -c "$OWN_START" "$TMPTAB")" = 1 ]                        || { echo "FEHLER: eigener Block nicht genau einmal im neuen Crontab"; exit 5; }
+[ "$(grep -c "$OWN_END" "$TMPTAB")" = 1 ]                          || { echo "FEHLER: Endmarke des eigenen Blocks nicht genau einmal"; exit 5; }
+[ "$FOREIGN_OLD" = "$FOREIGN_NEW" ]                                || { echo "FEHLER: fremde Bloecke veraendert ($FOREIGN_OLD -> $FOREIGN_NEW), Crontab bleibt unveraendert"; exit 5; }
+grep -q 'daten-li/bin/keepalive.sh' "$TMPTAB"                      || { echo "FEHLER: keepalive-Zeile fehlt im neuen Crontab"; exit 5; }
+# zeitgestempelte Sicherung der gelesenen Fassung, die letzten 5 bleiben erhalten
+if [ -n "$CUR" ]; then
+  BK=~/crontab.backup.$(date -u +%Y%m%d-%H%M%S)
+  printf '%s\n' "$CUR" > "$BK"; chmod 600 "$BK"
+  ls -1t ~/crontab.backup.* 2>/dev/null | tail -n +6 | xargs -r rm -f
+fi
+crontab "$TMPTAB"
 
 if [ "$DO_HTACCESS" = 1 ]; then
   H=~/public_html/datasites/.htaccess

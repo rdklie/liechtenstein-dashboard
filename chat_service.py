@@ -11,9 +11,13 @@ Ehrlich: Die Themenbindung per System-Prompt ist nie zu 100 % sicher. Der mögli
 (keine freie SQL, kein Code, kein Internet, keine Dateien), max_tokens und den Textfilter. Nichts davon ist absolut.
 """
 
+import dataclasses
+import hmac
+import ipaddress
 import json
 import logging
 import re
+import threading
 import time
 
 import chat_budget as B
@@ -97,9 +101,20 @@ _minimal = {"on": False}               # nach Ablehnung der optionalen Felder (t
 
 
 class AnthropicProvider:
-    """Anthropic Messages API über HTTPS (requests). Der Schlüssel kommt aus AI_CHAT_API_KEY und verlässt den Server nie."""
+    """Anthropic Messages API über HTTPS (requests). Der Schlüssel kommt aus AI_CHAT_API_KEY und verlässt den Server nie.
 
-    def complete(self, cfg: B.Config, system: str, messages: list, tools: list, tool_choice: dict, max_tokens: int) -> dict:
+    Abrechnungslogik bei Fehlern (fail closed): Nach aufgebauter Verbindung gilt jeder Fehler als möglicherweise abgerechnet (charge_worst), ausgenommen nur sichere
+    Fälle: Verbindungsaufbau schlägt fehl (ConnectTimeout, DNS, Verbindung verweigert, TLS) oder HTTP 400/401/403/429/529 mit gültigem JSON-Fehlerobjekt."""
+
+    SAFE_STATUS = (400, 401, 403, 429, 529)
+
+    @staticmethod
+    def _connect_failed(e) -> bool:
+        txt = f"{type(e).__name__} {e}"
+        return any(k in txt for k in ("NewConnectionError", "NameResolutionError", "Failed to establish a new connection", "Name or service not known",
+                                      "getaddrinfo failed", "Connection refused", "SSLError", "CERTIFICATE_VERIFY_FAILED"))
+
+    def complete(self, cfg: B.Config, system: str, messages: list, tools: list, tool_choice: dict, max_tokens: int, timeout: float | None = None) -> dict:
         import requests
         body = {"model": cfg.model, "max_tokens": max_tokens, "system": system, "messages": messages, "tools": tools, "tool_choice": tool_choice}
         if not _minimal["on"]:
@@ -109,33 +124,38 @@ class AnthropicProvider:
                 body["thinking"] = {"type": "disabled"}
         headers = {"x-api-key": cfg.api_key, "anthropic-version": API_VERSION, "content-type": "application/json",
                    "User-Agent": "LiechtensteinDashboard/1.0 (daten.li; Frage zu den Daten)"}
+        t = min(cfg.timeout, timeout) if timeout else cfg.timeout
         for attempt in (0, 1):
             try:
-                r = requests.post(API_URL, headers=headers, data=json.dumps(body), timeout=cfg.timeout)
+                r = requests.post(API_URL, headers=headers, data=json.dumps(body, ensure_ascii=False).encode("utf-8"), timeout=(min(5.0, t), t))
+            except requests.exceptions.ConnectTimeout:
+                raise ProviderError("timeout", "Verbindungsaufbau", charge_worst=False)
             except requests.exceptions.Timeout:
                 raise ProviderError("timeout", "Zeitüberschreitung", charge_worst=True)
             except requests.exceptions.RequestException as e:
-                raise ProviderError("connection", type(e).__name__)
+                raise ProviderError("connection", type(e).__name__, charge_worst=not self._connect_failed(e))
             try:
                 j = r.json()
             except ValueError:
-                raise ProviderError("bad_response", f"HTTP {r.status_code}", charge_worst=r.status_code == 200)
-            if r.status_code == 200 and j.get("type") == "message":
+                raise ProviderError("bad_response", f"HTTP {r.status_code}", charge_worst=True)         # z. B. 502/504 eines Zwischenproxys: Anbieter kann trotzdem abrechnen
+            if r.status_code == 200 and isinstance(j, dict) and j.get("type") == "message":
                 return j
+            valid_error = isinstance(j, dict) and j.get("type") == "error"
             err = (j.get("error") or {}) if isinstance(j, dict) else {}
-            msg = str(err.get("message", ""))[:300]
-            if r.status_code == 400 and attempt == 0 and not _minimal["on"] and re.search(r"output_config|effort|thinking", msg, re.I):
+            msg = str(err.get("message", "") if isinstance(err, dict) else "")[:300]
+            safe = valid_error and r.status_code in self.SAFE_STATUS
+            if r.status_code == 400 and attempt == 0 and not _minimal["on"] and valid_error and re.search(r"output_config|effort|thinking", msg, re.I):
                 log.warning("Anthropic lehnt optionale Felder ab (%s); weiter ohne thinking/effort", msg)
                 _minimal["on"] = True
                 body.pop("output_config", None)
                 body.pop("thinking", None)
                 continue
             if r.status_code in (401, 403):
-                raise ProviderError("auth", msg)
-            if r.status_code == 429 or r.status_code == 529 or r.status_code >= 500:
-                raise ProviderError("busy", f"HTTP {r.status_code} {msg}")
-            raise ProviderError("request", f"HTTP {r.status_code} {msg}")
-        raise ProviderError("request", "unerwartet")
+                raise ProviderError("auth", msg, charge_worst=not safe)
+            if r.status_code in (429, 529) or r.status_code >= 500:
+                raise ProviderError("busy", f"HTTP {r.status_code} {msg}", charge_worst=not safe)
+            raise ProviderError("request", f"HTTP {r.status_code} {msg}", charge_worst=not safe)
+        raise ProviderError("request", "unerwartet", charge_worst=True)
 
 
 _provider = {"obj": None}
@@ -171,8 +191,9 @@ def sanitize_question(q) -> str:
     return re.sub(r"\s+", " ", q).strip()
 
 
-def _approx_chars(system: str, messages: list, tools: list) -> int:
-    return len(system) + len(json.dumps(messages, ensure_ascii=False)) + len(json.dumps(tools, ensure_ascii=False))
+def _approx_bytes(system: str, messages: list, tools: list) -> int:
+    """Grösse der Anfrage in UTF-8-Bytes (Grundlage der Worst-Case-Schätzung)."""
+    return len(system.encode("utf-8")) + len(json.dumps(messages, ensure_ascii=False).encode("utf-8")) + len(json.dumps(tools, ensure_ascii=False).encode("utf-8"))
 
 
 def _tool_result_text(res: D.Result, max_rows: int = 60) -> str:
@@ -235,7 +256,27 @@ def _cost_note(adm, cfg) -> dict:
 
 # ── Hauptablauf ───────────────────────────────────────────────────────────────
 
-def handle_question(q_raw, sid: str | None, ip: str, now: float | None = None, frames=None) -> dict:
+_sem = {"obj": None, "n": 0}
+_sem_lock = threading.Lock()
+MSG_BUSY = "Die Funktion ist gerade ausgelastet. Bitte in einem Moment erneut versuchen."
+UNTRUSTED_IP = "untrusted"
+
+
+def _semaphore(cfg: B.Config):
+    """Höchstens cfg.concurrency gleichzeitige Chat-Fragen je Prozess: Chat und Dashboard teilen sich dieselben gunicorn-Threads (2 Worker × 2 Threads)."""
+    with _sem_lock:
+        if _sem["obj"] is None or _sem["n"] != cfg.concurrency:
+            _sem["obj"], _sem["n"] = threading.BoundedSemaphore(cfg.concurrency), cfg.concurrency
+        return _sem["obj"]
+
+
+def _untrusted_cfg(cfg: B.Config) -> B.Config:
+    """Alle Anfragen ohne vertrauenswürdige IP teilen sich einen gemeinsamen Topf mit strengen Limits."""
+    return dataclasses.replace(cfg, ip_per_min=min(cfg.ip_per_min, 3), ip_per_hour=min(cfg.ip_per_hour, 15), sessions_per_ip_day=min(cfg.sessions_per_ip_day, 8),
+                               ip_day_budget_urp=min(cfg.ip_day_budget_urp, 5 * B.URP))
+
+
+def handle_question(q_raw, sid: str | None, ip: str, now: float | None = None, frames=None, ip_trusted: bool = True) -> dict:
     """Beantwortet eine Frage. Rückgabe: dict(status, body, sid). body['ok'] False → body['message'] ist eine Nutzermeldung."""
     frames = frames or D.get_frame
     cfg = B.load_config()
@@ -246,34 +287,63 @@ def handle_question(q_raw, sid: str | None, ip: str, now: float | None = None, f
         return {"status": 400, "body": {"ok": False, "message": "Bitte eine Frage eingeben."}, "sid": sid}
     if len(q) > cfg.max_input_chars:
         return {"status": 400, "body": {"ok": False, "message": f"Die Frage ist zu lang (höchstens {cfg.max_input_chars} Zeichen)."}, "sid": sid}
+    if not ip_trusted:
+        ip, cfg = UNTRUSTED_IP, _untrusted_cfg(cfg)
+    sem = _semaphore(cfg)
+    if not sem.acquire(blocking=False):                                            # nichts zählen, nichts aufrufen
+        return {"status": 503, "body": {"ok": False, "message": MSG_BUSY, "kind": "busy"}, "sid": sid}
     try:
-        adm = B.admit(sid, ip, cfg, now)
-    except B.ChatError as e:
-        return {"status": e.status, "body": {"ok": False, "message": e.message, "kind": e.kind}, "sid": sid}
-    sid = adm.sid
-    spent = 0
-    outcome = "ok"
-    try:
-        out = _answer(cfg, adm, q, frames)
-        spent, outcome = out.pop("_spent"), out.pop("_outcome")
-        out.update(_cost_note(adm, cfg))
-        return {"status": 200 if out.get("ok") else 502, "body": out, "sid": sid, "new_session": adm.new_session}
-    except B.ChatError as e:
-        outcome = "limit:" + (e.kind or "budget")
-        return {"status": e.status, "body": {"ok": False, "message": e.message, "kind": e.kind}, "sid": sid, "new_session": adm.new_session}
-    except Exception:
-        log.exception("Frage fehlgeschlagen")
-        outcome = "error"
-        return {"status": 500, "body": {"ok": False, "message": MSG_FAIL}, "sid": sid, "new_session": adm.new_session}
-    finally:
         try:
-            B.log_question(adm, q, outcome, spent, now)
-            B.write_usage_json(cfg, now)
+            adm = B.admit(sid, ip, cfg, now)
+        except B.ChatError as e:
+            return {"status": e.status, "body": {"ok": False, "message": e.message, "kind": e.kind}, "sid": sid}
+        sid = adm.sid
+        state = {"spent": 0}
+        outcome = "ok"
+        try:
+            out = _answer(cfg, adm, q, frames, state)
+            outcome = out.pop("_outcome")
+            out.pop("_spent", None)
+            out.update(_cost_note(adm, cfg))
+            return {"status": 200 if out.get("ok") else 502, "body": out, "sid": sid, "new_session": adm.new_session}
+        except B.ChatError as e:
+            outcome = "limit:" + (e.kind or "budget")
+            return {"status": e.status, "body": {"ok": False, "message": e.message, "kind": e.kind}, "sid": sid, "new_session": adm.new_session}
         except Exception:
-            log.exception("Protokoll/Verbrauch nicht geschrieben")
+            log.exception("Frage fehlgeschlagen")
+            outcome = "error"
+            return {"status": 500, "body": {"ok": False, "message": MSG_FAIL}, "sid": sid, "new_session": adm.new_session}
+        finally:
+            try:
+                B.log_question(adm, q, outcome, state["spent"], now)                  # gebuchte Kosten stehen auch bei Fehlern im Protokoll
+                B.write_usage_json(cfg, now)
+            except Exception:
+                log.exception("Protokoll/Verbrauch nicht geschrieben")
+    finally:
+        sem.release()
 
 
-def _answer(cfg: B.Config, adm: B.Admission, q: str, frames) -> dict:
+def _call(cfg, adm, provider, system, messages, tool_choice, worst, reserved, state, timeout):
+    """Ein API-Aufruf zwischen reserve und settle: egal was passiert (auch Nicht-Anbieter-Fehler, KeyboardInterrupt), die Reservierung wird abgerechnet."""
+    try:
+        resp = provider.complete(cfg, system, messages, [TOOL], tool_choice, cfg.max_tokens, timeout=timeout)
+    except ProviderError as e:
+        charge = worst if e.charge_worst else 0
+        B.settle_safe(adm, reserved, charge, called=bool(charge))
+        state["spent"] += charge
+        raise
+    except BaseException:
+        B.settle_safe(adm, reserved, worst)                                         # Zustand unklar (z. B. UnicodeEncodeError nach dem Senden): schlimmsten Fall verbuchen
+        state["spent"] += worst
+        raise
+    actual = B.charge_urp(cfg, resp, worst) if isinstance(resp, dict) else worst
+    B.settle_safe(adm, reserved, actual)
+    state["spent"] += actual
+    return resp
+
+
+def _answer(cfg: B.Config, adm: B.Admission, q: str, frames, state: dict) -> dict:
+    t0 = time.monotonic()
     cat_text, keys = catalog(frames)
     system = SYSTEM_PROMPT.replace("{catalog}", cat_text)
     messages = []
@@ -284,39 +354,36 @@ def _answer(cfg: B.Config, adm: B.Admission, q: str, frames) -> dict:
     result = None
     spec_used = None
     last_text = ""
-    spent = 0
     calls = 0
     tool_runs = 0
     while calls < cfg.max_api_calls:
+        remaining = cfg.deadline - (time.monotonic() - t0)
+        if calls > 0 and remaining < 5:                                             # Gesamtzeit je Frage überschritten: mit dem Vorhandenen antworten
+            break
         calls += 1
         final_round = calls >= cfg.max_api_calls or tool_runs >= 2
         tool_choice = {"type": "none"} if final_round and tool_runs > 0 else {"type": "auto"}
-        worst = B.worst_case_urp(cfg, _approx_chars(system, messages, [TOOL]))
+        worst = B.worst_case_urp(cfg, _approx_bytes(system, messages, [TOOL]))
         try:
-            reserved = B.reserve(adm, worst, cfg)                              # wirft BudgetExceeded: dann kein Aufruf
+            reserved = B.reserve(adm, worst, cfg)                                  # wirft BudgetExceeded: dann kein Aufruf
         except B.BudgetExceeded:
-            if result is not None:                                              # Ergebnis liegt schon vor: Tabelle zeigen, Text entfällt
-                return _compose(cfg, adm, q, result, spec_used, "", spent, "budget_after_result")
+            if result is not None:                                                  # Ergebnis liegt schon vor: Tabelle zeigen, Text entfällt
+                return _compose(cfg, adm, q, result, spec_used, "", "budget_after_result")
             raise
         try:
-            resp = provider.complete(cfg, system, messages, [TOOL], tool_choice, cfg.max_tokens)
+            resp = _call(cfg, adm, provider, system, messages, tool_choice, worst, reserved, state, max(3.0, min(cfg.timeout, remaining)))
         except ProviderError as e:
-            charge = worst if e.charge_worst else 0
-            B.settle(adm, reserved, charge, called=bool(charge))
-            spent += charge
             log.warning("Anbieterfehler %s: %s", e.kind, e)
-            if result is not None:                                              # Ergebnis liegt vor: Tabelle trotzdem zeigen
-                return _compose(cfg, adm, q, result, spec_used, "", spent, "provider_after_result")
-            return {"ok": False, "message": MSG_PROVIDER, "_spent": spent, "_outcome": "provider:" + e.kind}
-        actual = B.cost_urp(cfg, resp.get("usage"))
-        B.settle(adm, reserved, actual)
-        spent += actual
-        content = resp.get("content") or []
-        text = "".join(b.get("text", "") for b in content if b.get("type") == "text").strip()
-        uses = [b for b in content if b.get("type") == "tool_use"]
-        if resp.get("stop_reason") == "max_tokens" and uses:                    # Werkzeug-JSON abgeschnitten: nicht ausführen
+            if result is not None:                                                  # Ergebnis liegt vor: Tabelle trotzdem zeigen
+                return _compose(cfg, adm, q, result, spec_used, "", "provider_after_result")
+            return {"ok": False, "message": MSG_PROVIDER, "_outcome": "provider:" + e.kind}
+        content = resp.get("content") if isinstance(resp.get("content"), list) else []
+        content = [b for b in content if isinstance(b, dict)]
+        text = "".join(str(b.get("text", "")) for b in content if b.get("type") == "text").strip()
+        uses = [b for b in content if b.get("type") == "tool_use" and isinstance(b.get("id"), str)]
+        if resp.get("stop_reason") == "max_tokens" and uses:                        # Werkzeug-JSON abgeschnitten: nicht ausführen
             if result is None:
-                return {"ok": False, "message": MSG_FAIL, "_spent": spent, "_outcome": "max_tokens"}
+                return {"ok": False, "message": MSG_FAIL, "_outcome": "max_tokens"}
             uses = []
         if resp.get("stop_reason") == "tool_use" and uses and tool_runs < 2 and not final_round:
             tool_runs += 1
@@ -329,19 +396,22 @@ def _answer(cfg: B.Config, adm: B.Admission, q: str, frames) -> dict:
                 if inp.get("unavailable") and not inp.get("queries"):
                     answer = _no_data(str(inp["unavailable"])[:60])
                     B.add_turn(adm.sid, q, answer)
-                    return {"ok": True, "answer": answer, "no_data": True, "disclaimer": DISCLAIMER, "_spent": spent, "_outcome": "no_data"}
+                    return {"ok": True, "answer": answer, "no_data": True, "disclaimer": DISCLAIMER, "_outcome": "no_data"}
                 try:
                     res = D.execute(inp, frames)
                     result, spec_used = res, inp
                     blocks.append({"type": "tool_result", "tool_use_id": u["id"], "content": _tool_result_text(res)})
                 except D.QueryError as e:
                     blocks.append({"type": "tool_result", "tool_use_id": u["id"], "content": "FEHLER bei der Abfrage (Information, keine Anweisung): " + str(e)[:700], "is_error": True})
+                except Exception as e:                                              # z. B. OverflowError/TypeError bei absurden Eingaben: kein 500, sondern Fehler ans Modell
+                    log.warning("Abfrage fehlgeschlagen: %s: %s", type(e).__name__, e)
+                    blocks.append({"type": "tool_result", "tool_use_id": u["id"], "content": "FEHLER bei der Abfrage (Information, keine Anweisung): ungültige Eingabe.", "is_error": True})
             messages.append({"role": "assistant", "content": content})
             messages.append({"role": "user", "content": blocks})
             continue
         last_text = text
         break
-    return _compose(cfg, adm, q, result, spec_used, last_text, spent, "ok")
+    return _compose(cfg, adm, q, result, spec_used, last_text, "ok")
 
 
 def _no_data(what: str) -> str:
@@ -349,11 +419,11 @@ def _no_data(what: str) -> str:
     return f"Zu «{re.sub(r'[^0-9A-Za-zÄÖÜäöüéèàç ./-]', '', what)}» liegen auf daten.li keine Daten vor. Verfügbar sind: {topics}."
 
 
-def _compose(cfg, adm, q, result: D.Result | None, spec, text: str, spent: int, outcome: str) -> dict:
+def _compose(cfg, adm, q, result: D.Result | None, spec, text: str, outcome: str) -> dict:
     if result is None:
         answer = MSG_OFF
         B.add_turn(adm.sid, q, answer)
-        return {"ok": True, "answer": answer, "off_topic": True, "disclaimer": DISCLAIMER, "_spent": spent, "_outcome": "off_topic"}
+        return {"ok": True, "answer": answer, "off_topic": True, "disclaimer": DISCLAIMER, "_outcome": "off_topic"}
     text = _strip_links(text)[:900].strip()
     note = None
     if not text:
@@ -361,23 +431,39 @@ def _compose(cfg, adm, q, result: D.Result | None, spec, text: str, spent: int, 
     elif not D.answer_numbers_ok(text, result):
         text = MSG_NUMBERS
         note = "text_rejected"
-    body = {"ok": True, "answer": text, "disclaimer": DISCLAIMER, **_present(result, spec), "_spent": spent, "_outcome": note or outcome}
+    body = {"ok": True, "answer": text, "disclaimer": DISCLAIMER, **_present(result, spec), "_outcome": note or outcome}
     B.add_turn(adm.sid, q, text if note is None else "(Ergebnis als Tabelle angezeigt)")
     return body
 
 
 # ── Flask-Routen ──────────────────────────────────────────────────────────────
 
-ALLOWED_HOSTS = {"daten.li", "www.daten.li", "dataportal.li", "www.dataportal.li", "datenportal.li", "www.datenportal.li", "localhost", "127.0.0.1"}   # localhost: Entwicklung (Port egal)
+ALLOWED_HOSTS = {"daten.li", "www.daten.li", "dataportal.li", "www.dataportal.li", "datenportal.li", "www.datenportal.li"}
+LOCAL_HOSTS = {"localhost", "127.0.0.1"}                  # nur mit AI_CHAT_ALLOW_LOCALHOST=1 (Entwicklung/Tests), in Produktion nie
 COOKIE = "dli_chat"
 COOKIE_MAX_AGE = 24 * 3600
+MAX_BODY = 4096
 
 
-def client_ip(request) -> str:
-    """Hinter LiteSpeed hängt der Proxy die Client-IP rechts an X-Forwarded-For an: der rechte Eintrag ist nicht fälschbar."""
+def client_ip(request, cfg: B.Config | None = None) -> tuple:
+    """(IP, vertrauenswürdig). Hinter dem Proxy steht die echte Client-IP rechts in X-Forwarded-For, der Proxy dupliziert aber mitgeschickte Einträge (live gemessen:
+    ohne eigenen Header 1 Eintrag, mit gefälschtem 3, mit zwei gefälschten 5). Vertraut wird deshalb nur bei genau EINEM Eintrag; sonst (oder ohne Header, d. h.
+    direkter Zugriff auf den lokalen Port) gilt die Anfrage als «unsicher» und teilt sich einen Topf mit strengen Limits. Mit AI_CHAT_PROXY_SECRET muss zusätzlich
+    der geheime Header X-Dli-Proxy stimmen, den nur der Proxy setzt."""
+    cfg = cfg or B.load_config()
     xff = request.headers.get("X-Forwarded-For", "")
-    cand = xff.split(",")[-1].strip() if xff else ""
-    return B.clean_ip(cand, request.remote_addr or "")
+    parts = [x.strip() for x in xff.split(",") if x.strip()]
+    ok = len(parts) == 1
+    if ok:
+        try:
+            ipaddress.ip_address(parts[0])
+        except ValueError:
+            ok = False
+    if ok and cfg.proxy_secret:
+        ok = hmac.compare_digest(request.headers.get("X-Dli-Proxy", ""), cfg.proxy_secret)
+    if not ok:
+        return UNTRUSTED_IP, False
+    return B.clean_ip(parts[0], request.remote_addr or ""), True
 
 
 def _signer():
@@ -396,16 +482,25 @@ def _read_sid(request) -> str | None:
         return None
 
 
+def _origin_ok(origin: str) -> bool:
+    host = re.sub(r"^https?://", "", origin).lower()
+    if host in ALLOWED_HOSTS:
+        return True
+    return B.env("AI_CHAT_ALLOW_LOCALHOST") == "1" and host.split(":")[0] in LOCAL_HOSTS
+
+
 def register(server):
     from flask import jsonify, request
+    server.config["MAX_CONTENT_LENGTH"] = 1_000_000                 # gilt auch für Anfragen ohne Content-Length (chunked)
 
     @server.get("/_chat/status")
     def chat_status():
         cfg = B.load_config()
+        ip, trusted = client_ip(request, cfg)
         xff = request.headers.get("X-Forwarded-For", "")
-        # ip_source/xff_hops: nur zur Kontrolle der Proxy-Kette (keine IP-Adresse); zeigt, ob der rechte X-Forwarded-For-Eintrag vom Proxy stammt
-        r = jsonify({"enabled": bool(cfg.enabled and cfg.api_key), "max_chars": cfg.max_input_chars,
-                     "ip_source": "xff" if xff else "remote", "xff_hops": len([x for x in xff.split(",") if x.strip()])})
+        # ip_trusted/xff_hops: nur zur Kontrolle der Proxy-Kette (keine IP-Adresse)
+        r = jsonify({"enabled": bool(cfg.enabled and cfg.api_key), "max_chars": cfg.max_input_chars, "ip_trusted": trusted,
+                     "xff_hops": len([x for x in xff.split(",") if x.strip()]), "proxy_header": bool(request.headers.get("X-Dli-Proxy"))})
         r.headers["Cache-Control"] = "no-store"
         return r
 
@@ -420,19 +515,24 @@ def register(server):
         # Hinter dem Proxy ist «Host» 127.0.0.1:<Port>; massgeblich ist der vom Browser gesetzte, nicht fälschbare Origin-Header (Cross-Site-Anfragen tragen die fremde Herkunft)
         origin = request.headers.get("Origin")
         if origin:
-            oh = re.sub(r"^https?://", "", origin).lower()
-            if (oh.split(":")[0] if oh.startswith(("localhost", "127.0.0.1")) else oh) not in ALLOWED_HOSTS:
+            if not _origin_ok(origin):
                 return reply({"ok": False, "message": "Anfrage abgelehnt."}, 403)
         elif request.headers.get("X-Requested-With") != "dli-chat":
             return reply({"ok": False, "message": "Anfrage abgelehnt."}, 403)
-        if not request.is_json or (request.content_length or 0) > 4096:
+        if request.mimetype != "application/json" or (request.content_length or 0) > MAX_BODY:
             return reply({"ok": False, "message": "Ungültige Anfrage."}, 400)
-        data = request.get_json(silent=True)
+        raw = request.stream.read(MAX_BODY + 1)                     # begrenzt lesen, auch ohne Content-Length
+        if len(raw) > MAX_BODY:
+            return reply({"ok": False, "message": "Ungültige Anfrage."}, 400)
+        try:
+            data = json.loads(raw.decode("utf-8"))
+        except (ValueError, UnicodeDecodeError):
+            data = None
         if not isinstance(data, dict) or not isinstance(data.get("q"), str):
             return reply({"ok": False, "message": "Ungültige Anfrage."}, 400)
-        out = handle_question(data["q"], _read_sid(request), client_ip(request))
+        ip, trusted = client_ip(request)
+        out = handle_question(data["q"], _read_sid(request), ip, ip_trusted=trusted)
         resp = reply(out["body"], out["status"])
         if out.get("sid") and out.get("new_session"):
-            resp.set_cookie(COOKIE, _signer().dumps(out["sid"]), max_age=COOKIE_MAX_AGE, httponly=True, samesite="Lax",
-                            secure=(request.is_secure or request.headers.get("X-Forwarded-Proto") == "https"), path="/_chat")
+            resp.set_cookie(COOKIE, _signer().dumps(out["sid"]), max_age=COOKIE_MAX_AGE, httponly=True, samesite="Lax", secure=True, path="/_chat")
         return resp
