@@ -205,6 +205,14 @@ Dazu der Zentralwert der Schweiz (BFS Lohnstrukturerhebung, PXWeb-API `px-x-0304
   kein liechtensteinischer Preisindex, keine Zwischenjahre, kein EU-Vergleich.
 - Korrelations-Labor: Reihen `lohn|…` (Median gesamt/Frauen/Männer, Lohnunterschied, real, Zupendler, Liechtensteiner/Ausländer, Schweiz) und drei Hypothesen mit Warnhinweisen (nur gerade Jahre, n ≤ 10).
 
+## Sicherheits-Header
+
+`app.py` (`@server.after_request`) setzt auf jeder Antwort `Content-Security-Policy`, `X-Frame-Options: DENY`, `Permissions-Policy`, `X-Content-Type-Options`, `Referrer-Policy`
+(HSTS kommt aus der `.htaccess`). Die CSP erlaubt `'unsafe-inline'` für Skripte und Styles (Dash-Renderer, Komponenten-Styles, Plotly), dazu nur die tatsächlich genutzten
+Fremdquellen: Google Fonts, Font Awesome (cdnjs), Bootswatch-Theme (jsDelivr) und die CARTO-Kartenkacheln der Karte im Tab «Wohnen» (MapLibre-Worker aus `blob:`);
+`frame-ancestors 'none'`, `base-uri 'none'`, `object-src 'none'`. Neue Fremdquellen im Frontend müssen in `CSP` ergänzt werden. Testen: `CSP_HEADER=Content-Security-Policy-Report-Only`
+setzen und in der Browser-Konsole nach «violates» suchen. `/_dash-layout` und `/_dash-dependencies` sind öffentlich (Dash-Standard) und enthalten nur UI-Struktur und Callback-IDs.
+
 ## Lokal starten
 
 ```bash

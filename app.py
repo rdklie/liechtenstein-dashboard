@@ -13,6 +13,7 @@ URL-Parameter:
 """
 
 import json
+import os
 from urllib.parse import urlencode
 
 import dash
@@ -108,6 +109,35 @@ app = dash.Dash(
     meta_tags=[{"name": "viewport", "content": "width=device-width, initial-scale=1"}],
 )
 server = app.server
+
+# ── Sicherheits-Header ───────────────────────────────────────────────────────
+# Dash braucht 'unsafe-inline' (Renderer-Start-Skript, Inline-Styles der Komponenten und Plotly). Externe Quellen: Google Fonts, Font Awesome (cdnjs),
+# Kartenkacheln/Schriften von CARTO (Plotly-Karte im Tab Wohnen; MapLibre läuft in einem Web-Worker aus blob:).
+CSP = "; ".join([
+    "default-src 'self'",
+    "script-src 'self' 'unsafe-inline'",
+    "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://cdnjs.cloudflare.com https://cdn.jsdelivr.net",
+    "font-src 'self' https://fonts.gstatic.com https://cdnjs.cloudflare.com data:",
+    "img-src 'self' data: blob: https://*.basemaps.cartocdn.com",
+    "connect-src 'self' https://*.basemaps.cartocdn.com https://basemaps.cartocdn.com",
+    "worker-src 'self' blob:",
+    "child-src 'self' blob:",
+    "object-src 'none'",
+    "base-uri 'none'",
+    "form-action 'self'",
+    "frame-ancestors 'none'",
+])
+CSP_HEADER = os.environ.get("CSP_HEADER", "Content-Security-Policy")     # zum Testen: Content-Security-Policy-Report-Only
+
+
+@server.after_request
+def _security_headers(resp):
+    resp.headers.setdefault(CSP_HEADER, CSP)
+    resp.headers.setdefault("X-Frame-Options", "DENY")
+    resp.headers.setdefault("Permissions-Policy", "camera=(), microphone=(), geolocation=(), payment=(), usb=(), interest-cohort=()")
+    resp.headers.setdefault("X-Content-Type-Options", "nosniff")
+    resp.headers.setdefault("Referrer-Policy", "same-origin")
+    return resp
 
 
 def _build_url(store: dict) -> str:
