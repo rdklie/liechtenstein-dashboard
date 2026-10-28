@@ -1007,6 +1007,38 @@ class TestKraki(unittest.TestCase):
         self.assertIn('fetch("/assets/kraki.svg"', js)
         self.assertNotIn(".innerHTML", js)                                  # SVG kommt per DOMParser, nie als HTML-String
 
+    def test_svg_ist_die_korrigierte_master_version(self):
+        svg = self._read("assets", "kraki.svg")
+        self.assertIn('class="kk-eyes"', svg)                              # Augenweiss/Brille im Normalzustand
+        self.assertIn("kk-blink", svg)
+        self.assertIn(".kk.kk-sleeping .kk-eyes{display:none}", svg)       # schlafend: Augen aus
+        self.assertNotIn('class="kk-idle kk-think"', svg)
+        master = os.path.join(self.ROOT, "..", "kraki", "kraki.svg")
+        if os.path.exists(master):
+            with open(master, encoding="utf-8") as f:
+                self.assertEqual(f.read().strip(), svg.strip())            # Kopie = Master
+
+    def test_overlay_js_anforderungen(self):
+        js = self._read("assets", "kraki_overlay.js")
+        self.assertIn('fetch("/_chat/status"', js)
+        self.assertIn("j.enabled !== true", js)                            # nur bei verfügbarem Chat
+        self.assertIn('getElementById("chat-root")', js)                   # auf dem Chat-Tab ausgeblendet
+        self.assertIn("sessionStorage", js)
+        for bad in ("document.cookie", "localStorage", ".innerHTML", "XMLHttpRequest", "sendBeacon", "navigator.", "eval("):
+            self.assertNotIn(bad, js)
+        self.assertEqual(js.count("fetch("), 2)                            # nur /_chat/status und /assets/kraki.svg
+        self.assertIn('"Frag Kraki: Fragen zu den Daten"', js)
+        self.assertIn("setTimeout(hideBubble, 8000)", js)
+        self.assertIn("}, 3000);", js)
+        self.assertIn('aria-hidden", "true"', js)                          # Blase kein Fokusfänger/Doppelansage
+
+    def test_overlay_css_anforderungen(self):
+        css = self._read("assets", "kraki_overlay.css")
+        for k in ("position: fixed", "env(safe-area-inset-bottom", "env(safe-area-inset-right", "z-index: 1000", "3.5s", "prefers-reduced-motion: reduce", "@media print", "width: 72px", "width: 56px", ":focus-visible"):
+            self.assertIn(k, css)
+        self.assertNotIn("url(", css)
+        self.assertNotIn("@import", css)
+
     def test_tab_beschriftung_und_csp_unveraendert(self):
         app = self._read("app.py")
         self.assertIn('label="Frage zu den Daten · Frag Kraki"', app)
