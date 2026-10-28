@@ -219,6 +219,14 @@ def run():
         log.error("  ✗ Landesrechnung — Fehler: %s", e)
         errors.append(f"Landesrechnung: {e}")
 
+    # ── «Frage zu den Daten»: Protokoll nach 30 Tagen löschen, Verbrauchsdatei für das Monitoring aktualisieren (Monatswechsel); kein KI-Aufruf ──
+    try:
+        import chat_budget
+        log.info("--- Frage zu den Daten: bereinigt %s, Verbrauch %s ---", chat_budget.prune(), chat_budget.write_usage_json())
+    except Exception as e:
+        log.error("  ✗ Frage zu den Daten (Bereinigung) — Fehler: %s", e)
+        errors.append(f"Frage zu den Daten: {e}")
+
     # ── Projektionen (statsmodels, höchstens wöchentlich; Rückwärtstest + Intervalle) ──
     try:
         import forecast

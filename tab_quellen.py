@@ -204,6 +204,19 @@ def _auto_rows(st: pd.DataFrame) -> list:
     return out
 
 
+def _ai_note() -> list:
+    """KI-Hinweis; ändert sich, sobald die Funktion «Frage zu den Daten» eingeschaltet ist."""
+    import chat_budget
+    if chat_budget.load_config().enabled:
+        return [html.B("KI nur in «Frage zu den Daten»: ", style={"color": TEXT}),
+                "Dort übersetzt ein KI-Modell (Anthropic Claude Haiku) eine Frage in eine Abfrage; Abfrage, Rechnung, Tabelle, Diagramm und Quelle erzeugt der Server aus den Daten dieses Dashboards. "
+                "Die Frage und das Abfrageergebnis werden dafür an Anthropic (USA) übermittelt. Fragen werden gekürzt höchstens 30 Tage zur Missbrauchsabwehr gespeichert, ohne IP-Adresse. "
+                "Sonst werden zur Laufzeit keine KI-Dienste aufgerufen; alle anderen Werte werden mit festen Rechenregeln aufbereitet. "]
+    return [html.B("Keine KI auf daten.li: ", style={"color": TEXT}),
+            "Es werden zur Laufzeit keine KI-Dienste aufgerufen und keine Texte oder Zahlen von einer KI erzeugt. Die Werte werden aus den Quellen gelesen und mit festen Rechenregeln "
+            "aufbereitet. "]
+
+
 def render_quellen() -> list:
     times = fetch_times()
     st = db.read_auto_status()
@@ -212,9 +225,8 @@ def render_quellen() -> list:
         _card([html.P([
             "Alle Zahlen auf diesem Dashboard stammen aus den unten genannten öffentlichen Quellen. Bei jeder Grafik steht die Quelle, hier steht sie je Bereich mit Herausgeber, "
             "Lizenz bzw. Nutzungsbedingung, Aktualisierungsrhythmus und dem Datum des letzten Abrufs in der Datenbank dieses Dashboards. ",
-            html.B("Keine KI auf daten.li: ", style={"color": TEXT}),
-            "Es werden zur Laufzeit keine KI-Dienste aufgerufen und keine Texte oder Zahlen von einer KI erzeugt. Die Werte werden aus den Quellen gelesen und mit festen Rechenregeln "
-            "aufbereitet. ", html.B("Prognosen und Korrelationen sind Statistik: ", style={"color": TEXT}),
+            *_ai_note(),
+            html.B("Prognosen und Korrelationen sind Statistik: ", style={"color": TEXT}),
             "Projektionen (ARIMA/ETS) und Korrelationskoeffizienten beschreiben Muster in vergangenen Daten, sie sind keine Vorhersagen und sagen nichts über Ursachen. "
             "Dies ist keine offizielle Seite, sondern ein unabhängiges Hobby- und Freizeitprojekt ohne Verbindung zu den genannten Stellen."],
             style={"color": MUTED, "fontSize": "0.85rem", "marginBottom": "0", "lineHeight": "1.55"})]),

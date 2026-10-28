@@ -30,7 +30,7 @@ $Pkg     = Join-Path $env:TEMP 'daten-li-deploy.tgz'
 Write-Host '1/5 Paket schnueren ...'
 Remove-Item $Pkg -ErrorAction SilentlyContinue
 Push-Location $Root
-tar -czf $Pkg app.py ui.py tab_wohnen.py tab_opendata.py tab_factbook.py tab_imf.py tab_migration.py migration.py tab_police.py police.py climate.py tab_klima.py correlate.py tab_korrelation.py bildung.py tab_bildung.py landesrechnung.py lohn.py tab_lohn.py tab_quellen.py forecast.py tab_prognose.py opendata.py imf.py factbook_import.py discover.py data_fetcher.py db.py worker.py requirements.txt assets deploy/server
+tar -czf $Pkg app.py ui.py tab_wohnen.py tab_opendata.py tab_factbook.py tab_imf.py tab_migration.py migration.py tab_police.py police.py climate.py tab_klima.py correlate.py tab_korrelation.py bildung.py tab_bildung.py landesrechnung.py lohn.py tab_lohn.py tab_quellen.py chat_data.py chat_budget.py chat_service.py tab_chat.py forecast.py tab_prognose.py opendata.py imf.py factbook_import.py discover.py data_fetcher.py db.py worker.py requirements.txt assets deploy/server
 if ($LASTEXITCODE -ne 0) { throw 'tar fehlgeschlagen' }
 Pop-Location
 
@@ -47,7 +47,7 @@ cd $B/_staging && tar -xzf pkg.tgz
 sed -i 's/\r$//' deploy/server/*   # Sicherheitsnetz gegen CRLF aus Windows
 mkdir -p $B/app $B/bin $B/data $B/cache $B/logs
 chmod 700 $B $B/data
-rsync -a --delete --exclude=__pycache__ app.py ui.py tab_wohnen.py tab_opendata.py tab_factbook.py tab_imf.py tab_migration.py migration.py tab_police.py police.py climate.py tab_klima.py correlate.py tab_korrelation.py bildung.py tab_bildung.py landesrechnung.py lohn.py tab_lohn.py tab_quellen.py forecast.py tab_prognose.py opendata.py imf.py factbook_import.py discover.py data_fetcher.py db.py worker.py requirements.txt assets $B/app/
+rsync -a --delete --exclude=__pycache__ app.py ui.py tab_wohnen.py tab_opendata.py tab_factbook.py tab_imf.py tab_migration.py migration.py tab_police.py police.py climate.py tab_klima.py correlate.py tab_korrelation.py bildung.py tab_bildung.py landesrechnung.py lohn.py tab_lohn.py tab_quellen.py chat_data.py chat_budget.py chat_service.py tab_chat.py forecast.py tab_prognose.py opendata.py imf.py factbook_import.py discover.py data_fetcher.py db.py worker.py requirements.txt assets $B/app/
 install -m 755 deploy/server/keepalive.sh deploy/server/stop.sh deploy/server/run-worker.sh deploy/server/run-discover.sh deploy/server/run-factbook-import.sh deploy/server/run-police-import.sh deploy/server/run-climate-import.sh $B/bin/
 
 # venv + Abhaengigkeiten (nur bei geaenderter requirements.txt)
@@ -57,8 +57,36 @@ if ! cmp -s $B/app/requirements.txt $B/requirements.installed; then
   cp $B/app/requirements.txt $B/requirements.installed
 fi
 
-# Crontab: eigenen Block ersetzen, alles andere unveraendert lassen
-( crontab -l 2>/dev/null | sed '/^# >>> daten-li/,/^# <<< daten-li/d'; cat deploy/server/crontab.txt ) | crontab -
+# .env (nur anlegen, wenn es fehlt): Schluessel und Schalter der Funktion «Frage zu den Daten». Benjamin traegt AI_CHAT_API_KEY selbst ein; AI_CHAT_ENABLED bleibt 0.
+if [ ! -f $B/.env ]; then
+  {
+    echo '# daten.li: Funktion "Frage zu den Daten" (KI). Nach Aenderungen: ~/daten-li/bin/stop.sh && ~/daten-li/bin/keepalive.sh'
+    echo 'AI_CHAT_ENABLED=0'
+    echo '# AI_CHAT_API_KEY=<eigener Schluessel, nur hier eintragen>'
+    echo '# AI_CHAT_MONTH_BUDGET_RP=1000'
+    echo '# AI_CHAT_SESSION_BUDGET_RP=20'
+  } > $B/.env
+  echo ".env angelegt (AI_CHAT_ENABLED=0)"
+fi
+chmod 600 $B/.env
+
+# Crontab: nur den eigenen Block «daten-li» ersetzen (monitor und faktcheck bleiben unveraendert).
+# Schutz 1: schlaegt crontab -l fehl (ausser "no crontab"), wird abgebrochen, statt den Crontab mit nur diesem Block zu ueberschreiben.
+CUR=$(crontab -l 2>&1) || case "$CUR" in
+  *"no crontab"*) CUR="" ;;
+  *) echo "FEHLER: crontab -l fehlgeschlagen ($CUR), Crontab bleibt unveraendert"; exit 3 ;;
+esac
+# Schutz 2: hat der gelesene Crontab weniger Bloecke als die letzte gute Kopie (~/crontab.lastgood, vom Monitor angelegt), abbrechen.
+if [ -f ~/crontab.lastgood ]; then
+  OLDN=$(grep -c '^# >>> ' ~/crontab.lastgood || true)
+  NEWN=$(printf '%s\n' "$CUR" | grep -c '^# >>> ' || true)
+  if [ "$NEWN" -lt "$OLDN" ]; then
+    echo "FEHLER: Crontab hat nur $NEWN Block/Bloecke, die letzte gute Kopie $OLDN. Crontab bleibt unveraendert (Wiederherstellung: crontab ~/crontab.lastgood)"
+    exit 4
+  fi
+fi
+[ -n "$CUR" ] && { printf '%s\n' "$CUR" > ~/crontab.backup; chmod 600 ~/crontab.backup; }
+( printf '%s\n' "$CUR" | sed '/^# >>> daten-li/,/^# <<< daten-li/d'; cat deploy/server/crontab.txt ) | crontab -
 
 if [ "$DO_HTACCESS" = 1 ]; then
   H=~/public_html/datasites/.htaccess

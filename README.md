@@ -13,6 +13,7 @@ Live unter <https://daten.li>.
 | `discover.py` | Wöchentlicher Discovery-Crawler: meldet neue/geänderte/entfernte Datensätze |
 | `tab_wohnen.py`, `tab_opendata.py` | Tabs «Wohnen & Immobilien» und «Open Data» (Explorer) |
 | `tab_factbook.py`, `factbook_import.py` | Tab «Factbook» (CIA World Factbook, Archiv 1990–2025, abgeschlossen) und der einmalige Import |
+| `chat_data.py`, `chat_budget.py`, `chat_service.py`, `tab_chat.py` | Optionaler KI-Tab «Frage zu den Daten» (Abschnitt unten; standardmässig aus) |
 | `tab_quellen.py` | Seite «Datenquellen» (`?tab=quellen`, Link in der Fusszeile jeder Seite): Quellen je Bereich mit Herausgeber, Lizenz, Rhythmus, letztem Abruf; Zustand der Automatik |
 | `tab_imf.py`, `imf.py` | Tab «IWF» (World Economic Outlook, DataMapper API) |
 | `tab_migration.py`, `migration.py` | Tab «Migration»: Anteile, Liechtenstein im Detail, Wanderung/Einbürgerung/Asyl, Straffälligkeit |
@@ -212,6 +213,53 @@ Dazu der Zentralwert der Schweiz (BFS Lohnstrukturerhebung, PXWeb-API `px-x-0304
 Fremdquellen: Google Fonts, Font Awesome (cdnjs), Bootswatch-Theme (jsDelivr) und die CARTO-Kartenkacheln der Karte im Tab «Wohnen» (MapLibre-Worker aus `blob:`);
 `frame-ancestors 'none'`, `base-uri 'none'`, `object-src 'none'`. Neue Fremdquellen im Frontend müssen in `CSP` ergänzt werden. Testen: `CSP_HEADER=Content-Security-Policy-Report-Only`
 setzen und in der Browser-Konsole nach «violates» suchen. `/_dash-layout` und `/_dash-dependencies` sind öffentlich (Dash-Standard) und enthalten nur UI-Struktur und Callback-IDs.
+
+## Frage zu den Daten (KI-Chat, standardmässig AUS)
+
+Optionaler Tab «Frage zu den Daten»: Eine KI (Anthropic, `claude-haiku-5-5`) übersetzt eine Frage in die **Beschreibung einer Abfrage**; Abfrage, Rechnung, Tabelle, Diagramm und Quelle erzeugt der **Server**
+(`chat_data.py`) aus den Daten dieses Dashboards. Die KI rechnet nie und nennt Zahlen nur aus dem Ergebnis: Der Antworttext wird nur gezeigt, wenn jede darin genannte Zahl im Ergebnis steht (sonst Standardtext + Tabelle).
+Ohne Treffer in den Daten (oder bei Off-Topic) gibt es einen festen Standardtext. Dateien: `chat_data.py` (Whitelist-Datensätze, Abfrage-Engine), `chat_budget.py` (Konfiguration, Budgets, Rate-Limits, Protokoll),
+`chat_service.py` (System-Prompt, Anbieter, Ablauf, Routen `/_chat/status`, `/_chat/ask`), `tab_chat.py` + `assets/chat.js` (Oberfläche), `tests/test_chat.py` (Tests mit Mock-Anbieter).
+
+**Sicherheit (ehrlich):** Die Themenbindung per System-Prompt ist nie zu 100 % sicher. Der mögliche Schaden ist begrenzt durch (1) ein einziges, festes, nur lesendes Werkzeug mit Whitelist (keine freie SQL, kein Code, kein Internet, keine Dateien,
+schreibgeschützte Verbindung, höchstens 200 Ergebniszeilen), (2) Budgets, (3) `max_tokens` und (4) den Zahlen-/Linkfilter für den Text. Das ist keine absolute Garantie.
+
+**Kosten, mehrstufig** (Beträge intern in µRappen, ganze Zahlen; alles in `chat.sqlite` neben der Hauptdatenbank, atomar mit `BEGIN IMMEDIATE`, auch über mehrere gunicorn-Prozesse):
+
+| Schutz | Standard | Variable |
+|---|---|---|
+| Hartes Limit beim Anbieter | von Benjamin im Anthropic-Konto gesetzt | – |
+| Monatsbudget (global) | 1000 Rappen (10 CHF); Meldung «Kontingent für diesen Monat erschöpft» | `AI_CHAT_MONTH_BUDGET_RP` |
+| Sitzungsbudget (signiertes Cookie, serverseitig gezählt) | 20 Rappen, 15 Fragen | `AI_CHAT_SESSION_BUDGET_RP`, `AI_CHAT_Q_PER_SESSION` |
+| Tagesbudget je IP-Hash (Cookie löschen umgeht nichts), neue Sitzungen je IP/Tag | 30 Rappen, 5 Sitzungen | `AI_CHAT_IP_DAY_BUDGET_RP`, `AI_CHAT_SESSIONS_PER_IP_DAY` |
+| Rate-Limit je IP / global | 5 je Minute, 30 je Stunde / 200 Fragen je Stunde | `AI_CHAT_IP_PER_MIN`, `AI_CHAT_IP_PER_HOUR`, `AI_CHAT_GLOBAL_PER_HOUR` |
+| Eingabe / Antwort | 500 Zeichen / `max_tokens` 800, Verlauf 2 Austausche (serverseitig), höchstens 3 API-Aufrufe je Frage | `AI_CHAT_MAX_INPUT_CHARS`, `AI_CHAT_MAX_TOKENS`, `AI_CHAT_HISTORY` |
+
+Vor jedem API-Aufruf wird der **schlimmste Fall** (geschätzte Eingabe-Tokens + `max_tokens` zum Ausgabepreis) gleichzeitig auf Monat, Sitzung und IP-Tag reserviert; reicht eines nicht, gibt es keinen Aufruf.
+Danach ersetzen die tatsächlichen Kosten aus den `usage`-Angaben der API-Antwort die Reservierung. Fehler des Anbieters (429/5xx, Verbindung) kosten nichts; bei einer Zeitüberschreitung wird der schlimmste Fall zur Sicherheit gezählt.
+Preise: Haiku 5.5 kostet laut Preisseite von Anthropic 0.10 USD (Eingabe) bzw. 0.50 USD (Ausgabe) je Million Token; konfiguriert als µRappen je Token (`AI_CHAT_PRICE_IN_URP=10`, `AI_CHAT_PRICE_OUT_URP=50`), gerechnet mit 1 CHF = 1 USD, also bewusst grosszügig.
+Wer das Modell oder die Preise ändert, passt diese Variablen an (`AI_CHAT_MODEL`). Optional: `AI_CHAT_EFFORT` (Standard `low`), `AI_CHAT_THINKING=disabled`.
+
+**Einschalten (nur Benjamin):** Schlüssel nur auf dem Server in `~/daten-li/.env` eintragen (das Deploy legt die Datei mit `AI_CHAT_ENABLED=0` an, Rechte 600; nie im Repo, nie im Browser):
+
+```bash
+nano ~/daten-li/.env        # AI_CHAT_API_KEY=... eintragen und AI_CHAT_ENABLED=1 setzen
+~/daten-li/bin/stop.sh && ~/daten-li/bin/keepalive.sh      # der Tab erscheint erst nach dem Neustart
+```
+
+**Kill-Switch:** `AI_CHAT_ENABLED=0` (Neustart nötig für den Tab) **oder sofort, ohne Neustart:** `touch ~/daten-li/data/chat.disabled` (löschen zum Wiedereinschalten). Beides wird bei jeder Anfrage geprüft.
+
+**Monitoring:** `~/daten-li/data/chat_usage.json` (atomar nach jeder Frage und täglich vom Worker geschrieben), Felder `month`, `enabled`, `budget_rp`, `spent_rp`, `reserved_rp`, `percent`, `warn_percent`, `state` (`ok` | `warn` ab 80 % | `exhausted`),
+`calls`, `questions`, `model`, `updated`. Ein Monitor mit Schreibrecht kann zusätzlich `chat.disabled` anlegen.
+
+**Datenschutz:** IP-Adressen werden nie im Klartext gespeichert (HMAC mit Tagessalz, am Folgetag nicht verknüpfbar; hinter LiteSpeed zählt der rechte `X-Forwarded-For`-Eintrag). Fragen werden gekürzt (300 Zeichen) mit Zeitstempel, IP-Hash, Kurz-Sitzungs-ID, Ergebnis und Kosten
+höchstens 30 Tage protokolliert (Worker löscht täglich). Frage und Abfrageergebnis gehen an Anthropic (USA); Hinweis im Tab, in der Fusszeile und auf «Datenquellen».
+
+**Datensätze (Whitelist):** Wohnbevölkerung, sechs Lohn-Sichten (Branche, Wohnsitz, Alter, Voll-/Teilzeit, Staatsbürgerschaft, Unternehmensgrösse), Kosten Asylwesen (Landesrechnung Konto 590) und je Kopf, Asyl-Bestand, Ausgaben des Staates nach Funktion (501.031, auch
+«Soziale Sicherung»; Cache-Schlüssel `edu:spend_all`, der Worker spiegelt ihn wöchentlich), Polizei-Kennzahlen, Weltbank-Indikatoren, Klima je Gemeinde, Tourismus, PISA, Arbeitslosenquote, Beschäftigte. **Nicht vorhanden:** Sozialhilfe, AHV/IV-Renten und Krankenkassenprämien als eigene Reihen,
+Beschäftigtenzahlen nach Branche und Geschlecht (deshalb keine Struktur-Zerlegung des Lohnunterschieds), Kosten je Asylgesuch.
+
+Tests: `python -m unittest discover -s tests -v` (Budget/Reservierung inkl. parallele Anfragen, Rate-Limits, Validator, Missbrauchsfälle, Routen; Mock-Anbieter, kein Schlüssel nötig).
 
 ## Lokal starten
 

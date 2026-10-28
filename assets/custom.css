@@ -612,3 +612,29 @@ hr.filter-hr {
 .footer-link { color: #58A6FF; text-decoration: none; }
 .footer-link:hover { text-decoration: underline; }
 .footer-sep { color: #30363D; }
+
+/* ── Frage zu den Daten (KI-Chat) ──────────────────────────────── */
+.chat-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 10px; }
+.chat-chip { background: #161B22; color: #C9D1D9; border: 1px solid #30363D; border-radius: 14px; padding: 4px 10px; font-size: 0.74rem; cursor: pointer; text-align: left; }
+.chat-chip:hover { border-color: #58A6FF; color: #E6EDF3; }
+.chat-input { width: 100%; background: #0D1117; color: #E6EDF3; border: 1px solid #30363D; border-radius: 8px; padding: 10px 12px; font: inherit; font-size: 0.9rem; resize: vertical; }
+.chat-input:focus { outline: none; border-color: #58A6FF; }
+.chat-actions { display: flex; align-items: center; gap: 12px; margin-top: 8px; }
+.chat-send { background: #002B7F; color: #fff; border: 1px solid #2f5bb7; border-radius: 8px; padding: 6px 16px; font-weight: 600; cursor: pointer; }
+.chat-send:hover:not(:disabled) { background: #0a3a9f; }
+.chat-send:disabled { opacity: 0.5; cursor: wait; }
+.chat-counter { color: #8B949E; font-size: 0.74rem; }
+.chat-log { display: flex; flex-direction: column; gap: 10px; }
+.chat-msg { border-radius: 10px; padding: 10px 14px; font-size: 0.88rem; line-height: 1.55; max-width: 100%; overflow-wrap: anywhere; }
+.chat-q { background: #1a2740; border: 1px solid #2a3d63; align-self: flex-end; max-width: 92%; }
+.chat-a { background: #161B22; border: 1px solid #30363D; }
+.chat-answer { margin: 0 0 8px 0; color: #E6EDF3; }
+.chat-wait { margin: 0; color: #8B949E; }
+.chat-error { margin: 0; color: #F85149; }
+.chat-title { font-weight: 600; margin: 6px 0; color: #E6EDF3; }
+.chat-table-wrap { overflow-x: auto; margin: 6px 0; }
+.chat-table th.num, .chat-table td.num { text-align: right; white-space: nowrap; }
+.chat-chart { min-height: 120px; margin: 6px 0; }
+.chat-notes, .chat-sources, .chat-disclaimer, .chat-detail-line { color: #8B949E; font-size: 0.76rem; margin-top: 4px; }
+.chat-details summary { cursor: pointer; color: #8B949E; font-size: 0.76rem; margin-top: 6px; }
+@media (max-width: 640px) { .chat-q { max-width: 100%; } .chat-msg { padding: 9px 10px; } }

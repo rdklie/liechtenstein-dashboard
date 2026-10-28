@@ -44,6 +44,9 @@ import tab_prognose
 import tab_migration
 import tab_police
 import tab_quellen
+import chat_budget
+import chat_service
+import tab_chat
 import tab_opendata
 import tab_wohnen
 from db import (
@@ -109,6 +112,8 @@ app = dash.Dash(
     meta_tags=[{"name": "viewport", "content": "width=device-width, initial-scale=1"}],
 )
 server = app.server
+chat_service.register(server)                      # /_chat/status und /_chat/ask (Frage zu den Daten; ohne AI_CHAT_ENABLED=1 antworten sie «nicht verfügbar»)
+CHAT_ON = chat_budget.load_config().enabled        # Tab nur sichtbar, wenn die Funktion beim Start eingeschaltet ist (Kill-Switch wirkt zusätzlich bei jeder Anfrage)
 
 # ── Sicherheits-Header ───────────────────────────────────────────────────────
 # Dash braucht 'unsafe-inline' (Renderer-Start-Skript, Inline-Styles der Komponenten und Plotly). Externe Quellen: Google Fonts, Font Awesome (cdnjs),
@@ -236,6 +241,7 @@ def _build_sidebar() -> html.Div:
                                 dcc.Tab(label="Lohn", value="lohn", className="stab", selected_className="stab-selected"),
                                 dcc.Tab(label="Polizeistatistik", value="polizei", className="stab", selected_className="stab-selected"),
                                 dcc.Tab(label="Datenquellen", value="quellen", className="stab", selected_className="stab-selected"),
+                                *([dcc.Tab(label="Frage zu den Daten", value="frage", className="stab stab-exp", selected_className="stab-selected stab-exp-selected")] if CHAT_ON else []),
                                 dcc.Tab(label="Politik ↗", value="politik", className="stab stab-politik", selected_className="stab-selected"),
                                 dcc.Tab(label="Klimawandel", value="klimawandel", className="stab stab-exp", selected_className="stab-selected stab-exp-selected"),
                                 dcc.Tab(label="Korrelations-Labor", value="korrelation", className="stab stab-exp", selected_className="stab-selected stab-exp-selected"),
@@ -398,7 +404,9 @@ app.layout = html.Div(
                 html.Span(" · ", className="footer-sep"),
                 html.A("Kontakt", href="#", className="footer-link", **{"data-contact": "1"}),
                 html.Span(" · ", className="footer-sep"),
-                html.Span("Keine KI auf daten.li · Prognosen und Korrelationen sind Statistik, keine Vorhersagen · Unabhängiges Hobbyprojekt, keine offizielle Seite"),
+                html.Span(("KI nur in «Frage zu den Daten» (Antworten ungeprüft, Fragen höchstens 30 Tage gespeichert, ohne IP-Adresse) · Prognosen und Korrelationen sind Statistik, keine Vorhersagen"
+                           if CHAT_ON else "Keine KI auf daten.li · Prognosen und Korrelationen sind Statistik, keine Vorhersagen")
+                          + " · Unabhängiges Hobbyprojekt, keine offizielle Seite"),
             ],
             className="app-footer",
         ),
@@ -569,6 +577,8 @@ def render_content(tab, year, indicators, weather_year, weather_vars, municipali
         return _with_exp_notice(tab_klima.render_klima(data))
     elif data["tab"] == "quellen":
         return tab_quellen.render_quellen()
+    elif data["tab"] == "frage" and CHAT_ON:
+        return _with_exp_notice(tab_chat.render_chat())
     elif data["tab"] == "polizei":
         return tab_police.render_police(data)
     elif data["tab"] == "migration":
@@ -648,6 +658,7 @@ AREAS = [
     ("Bildung", "bildung", "Schulen, Lernende, Studierende, Staatsbürgerschaft der Schulkinder, PISA 2000–2012", ""),
     ("Lohn", "lohn", "Medianlohn, Lohnunterschied Frauen/Männer, Branchen, Alter, Wohnsitz, Lohnverteilung, Vergleich Schweiz", ""),
     ("Polizeistatistik", "polizei", "Jahresberichte der Landespolizei seit 2009", ""),
+    *([("Frage zu den Daten", "frage", "Fragen in einem Satz; KI übersetzt in eine Abfrage, der Server rechnet und zeigt Tabelle und Quelle", "exp")] if CHAT_ON else []),
     ("Politik", "politik", "Externes Angebot faktencheck.li, öffnet in neuem Tab", "ext"),
     ("Klimawandel", "klimawandel", "ERA5-Langzeitreihen je Gemeinde, Trends, Warming Stripes", "exp"),
     ("Korrelations-Labor", "korrelation", "Zwei Reihen vergleichen: Korrelation, Zeitverschiebung", "exp"),

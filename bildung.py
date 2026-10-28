@@ -32,6 +32,7 @@ EDU_PX = {
     "apprentices": ("Bildung/Berufliche Grundbildung/483.011.px", {"Bildungsfeld": ["Bildungfeld - Total"], "Geschlecht": ["Geschlecht - Total"]}),
     "attainment": ("Bildung/Bildungsstand/491.002d.px", {"Geschlecht": ["Geschlecht - Total"], "Fünfjahresklassen": ["Fünfjahresklassen - Total"]}),
     "spend":    ("Staat und Politik/Öffentliche Finanzen/501.031.px", {"Funktion": ["Ausgaben", " 9 Bildungswesen"]}),
+    "spend_all": ("Staat und Politik/Öffentliche Finanzen/501.031.px", {}),                 # alle Funktionen (COFOG) × Teilsektor, für «Frage zu den Daten»
 }
 
 # PISA-Mittelwerte (Weltbank EdStats, OECD-Quelle): Land → ISO3; Indikator → Fach
