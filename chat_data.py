@@ -198,6 +198,42 @@ def _load_staat_je_einwohner() -> pd.DataFrame:
     return m[["Jahr", "Funktion", "Teilsektor", "Wert"]].reset_index(drop=True)
 
 
+def _px_src(name: str) -> tuple:
+    """(Tabellen-ID, Link) einer Wohnen-Tabelle aus opendata.CURATED für die Quellenangabe."""
+    from opendata import CURATED, px_web_url
+    path = CURATED[name]
+    return path.rsplit("/", 1)[-1].replace(".px", ""), px_web_url(path)
+
+
+def _wohnen(name: str, dims: list, rename: dict | None = None):
+    def load():
+        from opendata import CURATED
+        df = _px(CURATED[name])
+        return _tidy(df.rename(columns=rename or {}), dims)
+    return load
+
+
+def _load_mieten(variant: str, dim: str, dim_new: str):
+    """Netto- und Bruttomiete (Volkszählung 2010/2015/2020) in einem Datensatz: Stichtag → Jahr, Kennzahl Nettomiete/Bruttomiete."""
+    def load():
+        from opendata import CURATED
+        parts = []
+        for kind, label in (("netto", "Nettomiete"), ("brutto", "Bruttomiete")):
+            df = _px(CURATED[f"miete_{kind}_{variant}"]).rename(columns={dim: dim_new})
+            df["Jahr"] = df["Stichtag"].astype(str).str[-4:]
+            df["Kennzahl"] = label
+            parts.append(df)
+        return _tidy(pd.concat(parts), ["Jahr", "Kennzahl", dim_new, "Gemeinde"])
+    return load
+
+
+def _load_bautaetigkeit() -> pd.DataFrame:
+    from opendata import CURATED
+    a = _px(CURATED["bewilligt"]).rename(columns={"Bewilligungsjahr": "Jahr", "Bewilligte neue Gebäude und Wohnungen": "Kennzahl"})
+    b = _px(CURATED["abbruch"]).rename(columns={"Bewilligungsjahr": "Jahr", "Gebäude- oder Wohnungstyp": "Kennzahl"})
+    return _tidy(pd.concat([a, b]), ["Jahr", "Kennzahl", "Gemeinde"])
+
+
 def _build_registry() -> dict:
     ds = []
     add = ds.append
@@ -275,6 +311,64 @@ def _build_registry() -> dict:
                 _px_loader("pxs:li_commuters", ["Jahr", "Wohnland", "Staatsbürgerschaft", "Geschlecht"]),
                 ["Jahr", "Wohnland", "Staatsbürgerschaft", "Geschlecht"],
                 {"Wohnland": "Wohnland - Total", "Staatsbürgerschaft": "Staatsbürgerschaft - Total", "Geschlecht": "Geschlecht - Total"}, additive=True, base_unit="Personen"))
+    # ── Wohnen (Tab «Wohnen & Immobilien») ─────────────────────────────────────
+    AFS = "Amt für Statistik Liechtenstein, opendata.li (CC BY), Tabelle "
+    LEER = ("Leerstand: Die amtliche Statistik weist Wohnungen aus, die am Stichtag «nicht bewohnt» bzw. «nicht dauernd bewohnt» waren. "
+            "Das kann auch Ferien-/Zweitwohnungen enthalten und ist nicht gleichbedeutend mit marktwirksamem Leerstand.")
+    HIER = "Gebäudeart ist hierarchisch (Wohngebäude enthält Reine Wohngebäude usw.): Teilwerte nicht addieren."
+    gem_tot = {"Gemeinde": "Liechtenstein"}
+    for key, title, unit, tab, dims, kw in (
+        ("wohnungen_belegung", "Wohnungen nach Gemeinde, Gebäudeart, Nutzungsart und Belegungsstatus am Stichtag (Leerstand = «Am Stichtag nicht bewohnt»)", "Wohnungen", "belegung",
+         ["Jahr", "Gemeinde", "Gebäudeart", "Nutzungsart", "Belegungsstatus"],
+         dict(notes=[LEER, HIER, "Fehlende Werte (Datenschutz/nicht ausgewiesen) erscheinen nicht in der Tabelle."],
+              hint="nicht bewohnte Wohnungen: Belegungsstatus «Am Stichtag nicht bewohnt»; alle Wohnungen: ohne Filter")),
+        ("wohnungsbestand", "Wohnungsbestand je Gemeinde (lange Reihe ab 1980)", "Wohnungen", "wohnungen", ["Jahr", "Gemeinde"], dict(hint="Stichtag je Jahr gemäss Quelle")),
+        ("gebaeude", "Gebäude nach Gebäudeart und Gemeinde", "Gebäude", "gebaeude", ["Jahr", "Gebäudeart", "Gemeinde"], dict(notes=[HIER])),
+    ):
+        tid, url = _px_src(tab)
+        add(Dataset(key, title, unit, AFS + tid, url, _wohnen(tab, dims), dims, gem_tot, additive=False, base_unit=unit, **kw))
+    for key, title, variant, dim, dim_new in (
+        ("mieten_zimmer", "Durchschnittliche Netto- und Bruttomiete je Wohnung nach Zimmerzahl und Gemeinde (Volkszählung 2010, 2015, 2020)", "zi", "Zimmerzahl der Wohnungen", "Zimmerzahl"),
+        ("mieten_flaeche", "Durchschnittliche Netto- und Bruttomiete je Wohnung nach Wohnungsfläche und Gemeinde (Volkszählung 2010, 2015, 2020)", "m2", "Wohnungsfläche", "Wohnungsfläche"),
+    ):
+        tid, url = _px_src(f"miete_netto_{variant}")
+        tid_b, _ = _px_src(f"miete_brutto_{variant}")
+        add(Dataset(key, title, "CHF je Wohnung und Monat", f"{AFS}{tid} und {tid_b}", url, _load_mieten(variant, dim, dim_new),
+                    ["Jahr", "Kennzahl", dim_new, "Gemeinde"], {dim_new: "Zimmerzahl der Wohnungen - Total", **gem_tot}, additive=False, base_unit="CHF je Wohnung und Monat",
+                    notes=["Durchschnittswerte in CHF pro Wohnung und Monat aus der Volkszählung, nur für die Stichtage 2010, 2015 und 2020; keine Preise pro m² und keine Kauf- oder Angebotspreise.",
+                           "Für kleine Gemeinden fehlen einzelne Werte (Datenschutz); fehlende Werte erscheinen nicht."],
+                    hint="Kennzahl: Nettomiete | Bruttomiete"))
+    tid, url = _px_src("bewilligt")
+    tid_a, _ = _px_src("abbruch")
+    add(Dataset("baubewilligungen", "Baubewilligungen: bewilligte neue Gebäude und Wohnungen sowie Abbruchbewilligungen je Gemeinde und Jahr", "Anzahl", f"{AFS}{tid} und {tid_a}", url,
+                _load_bautaetigkeit, ["Jahr", "Kennzahl", "Gemeinde"], gem_tot, additive=False, base_unit="Anzahl",
+                notes=["Bewilligungen, keine Fertigstellungen: bewilligte Wohnungen sind nicht gleich neu gebaute oder bezogene Wohnungen."],
+                hint="Kennzahl immer angeben, z. B. «Bewilligte neue Wohnungen - Total»"))
+    # ── Bildung und Migration (weitere Tabellen des Amts für Statistik) ─────────
+    def simple(key, title, unit, source_id, loader_key, dims, tots, rename=None, notes=None, hint=""):
+        add(Dataset(key, title, unit, AFS + source_id, "https://www.statistikportal.li/", _px_loader(loader_key, dims, rename), dims, tots, additive=False, base_unit=unit,
+                    notes=notes or [], hint=hint))
+    SJ = {"Jahr": "Schuljahr"}
+    HST = "Schulstufen sind hierarchisch (Primarstufe enthält Kindergarten und Primarschule): Teilwerte nicht addieren."
+    FEHLT = "Fehlende Werte (Datenschutz/nicht ausgewiesen) erscheinen nicht."
+    simple("schulkinder", "Schulkinder nach Schuljahr, Schultyp und Schulstufe", "Schulkinder", "481.001", "edu:pupils", ["Schuljahr", "Schultyp", "Schulstufe"],
+           {"Schultyp": "Schultyp -Total", "Schulstufe": "Schulstufe - Total"}, SJ, [HST, FEHLT], "Schuljahr z. B. 2024/25")
+    simple("schulkinder_staatsbuergerschaft", "Schulkinder nach Schuljahr, Schulstufe und Staatsbürgerschaft (LI, CH/AT/DE, Übrige)", "Schulkinder", "481.002", "edu:pupils_cit",
+           ["Schuljahr", "Schulstufe", "Staatsbürgerschaft"], {"Schulstufe": "Schulstufe - Total", "Staatsbürgerschaft": "Staatsbürgerschaft - Total"}, SJ, [HST, FEHLT], "Schuljahr z. B. 2024/25")
+    simple("lernende", "Lernende (Berufsbildung) in Liechtenstein nach Schuljahr und Wohnland", "Lernende", "483.011", "edu:apprentices", ["Schuljahr", "Wohnland"],
+           {"Wohnland": "Wohnland - Total"}, SJ, [FEHLT], "Schuljahr z. B. 2024/25")
+    simple("studierende", "Studierende an Hochschulen in Liechtenstein nach Schuljahr und Ausbildungsstätte", "Studierende", "482.007", "edu:students", ["Schuljahr", "Ausbildungsstätte"],
+           {"Ausbildungsstätte": "Ausbildungsstätte - Total"}, SJ, [FEHLT], "Schuljahr z. B. 2024/25")
+    simple("abschluesse_sekundarstufe_2", "Abschlüsse der Sekundarstufe II (Matura) in Liechtenstein nach Jahr und Profil", "Abschlüsse", "481.101", "edu:grads", ["Jahr", "Profil"],
+           {"Profil": "Profil - Total"}, None, ["«…davon an privaten Schulen» ist ein Teilwert der Gesamtzahl."])
+    simple("einbuergerungen", "Einbürgerungen und Registrierungen nach Jahr und Einbürgerungsart (ab 1970)", "Personen", "232.001", "pxs:li_naturalisation", ["Jahr", "Einbürgerungsart"],
+           {"Einbürgerungsart": "Einbürgerung und Registrierungen  - Total"}, None,
+           ["Einbürgerungsarten sind hierarchisch (Ordentliche und Erleichterte Einbürgerung mit Unterarten): Teilwerte nicht addieren.", FEHLT])
+    simple("zuzug_wegzug", "Einwanderung und Auswanderung der ständigen Bevölkerung nach Jahr", "Personen", "231.101", "pxs:li_migration", ["Jahr", "Richtung"], {}, None,
+           ["Wanderungssaldo = Einwanderung minus Auswanderung (compare_diff über die Spalte Richtung)."], "Richtung: Einwanderung | Auswanderung")
+    simple("asylgesuche", "Asylgesuche und Schutzgesuche nach Jahr", "Gesuche", "233.201", "pxs:li_asylum", ["Jahr", "Bewilligungstyp"], {}, None, [FEHLT], "Bewilligungstyp: Asylgesuche | Schutzgesuche")
+    simple("nichtstaendige_bevoelkerung", "Nichtständige Bevölkerung nach Jahr", "Personen", "211.101", "pxs:li_nonperm", ["Jahr"], {}, None,
+           ["Nicht Teil der ständigen Wohnbevölkerung (Datensatz bevoelkerung)."])
     return {d.key: d for d in ds}
 
 

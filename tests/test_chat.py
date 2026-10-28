@@ -41,6 +41,14 @@ FIX = {
     "asyl_kosten_je_kopf": _df(["Jahr", "Kennzahl", "Wert"], [
         (2022, "Netto-Aufwand je Einwohner (Wohnbevölkerung Jahresende)", 205.1), (2023, "Netto-Aufwand je Einwohner (Wohnbevölkerung Jahresende)", 250.0),
         (2023, "Netto-Aufwand je Person im Bestand (Jahresende)", 5000.0)]),
+    "wohnungen_belegung": _df(["Jahr", "Gemeinde", "Gebäudeart", "Nutzungsart", "Belegungsstatus", "Wert"], [
+        (y, g, "Gebäudeart - Total", n, bs, v)
+        for y, g, n, bs, v in (
+            (2024, "Ruggell", "Nutzungsart - Total", "Belegungsstatus - Total", 1155.0), (2024, "Ruggell", "Nutzungsart - Total", "Am Stichtag nicht bewohnt", 95.0),
+            (2024, "Ruggell", "Nutzungsart - Total", "Am Stichtag bewohnt", 1060.0), (2024, "Ruggell", "Nicht dauernd bewohnt", "Belegungsstatus - Total", 75.0),
+            (2023, "Ruggell", "Nutzungsart - Total", "Am Stichtag nicht bewohnt", 90.0), (2023, "Ruggell", "Nutzungsart - Total", "Belegungsstatus - Total", 1144.0),
+            (2024, "Liechtenstein", "Nutzungsart - Total", "Am Stichtag nicht bewohnt", 2000.0), (2024, "Liechtenstein", "Nutzungsart - Total", "Belegungsstatus - Total", 22447.0))]),
+    "wohnungsbestand": _df(["Jahr", "Gemeinde", "Wert"], [(2023, "Ruggell", 1144.0), (2024, "Ruggell", 1155.0), (2024, "Liechtenstein", 22447.0)]),
     "lohn_branche": _df(["Jahr", "Wirtschaftszweig", "Geschlecht", "Kennzahl", "Wert"], [
         (2024, "Wirtschaftszweig - Total", "Geschlecht - Total", "Median", 7300.0), (2024, "Wirtschaftszweig - Total", "Männer", "Median", 7800.0), (2024, "Wirtschaftszweig - Total", "Frauen", "Median", 6600.0),
         (2024, "Industrie", "Männer", "Median", 7400.0), (2024, "Industrie", "Frauen", "Median", 6900.0), (2024, "Industrie", "Geschlecht - Total", "Median", 7300.0),
@@ -112,6 +120,48 @@ class TestEngine(unittest.TestCase):
         v = df[(df["Teilsektor"] == "S.13 Staat") & (df["Funktion"] == "Soziale Sicherung")]["Wert"].iloc[0]
         self.assertAlmostEqual(v, 703.0e6 / 40000)                       # Liechtenstein gesamt, nicht Vaduz/Schaan
         self.assertEqual(len(df), 2)
+
+    def test_leerstand_ruggell_2024_mit_hinweis(self):
+        s = {"queries": [{"dataset": "wohnungen_belegung", "filters": {"Gemeinde": ["Ruggell"], "Belegungsstatus": ["Am Stichtag nicht bewohnt"], "Jahr": [2024]}, "group_by": ["Jahr"]}]}
+        r = D.execute(s, frames)
+        self.assertEqual(r.rows[0][r.values[0]], 95.0)                    # nicht der Wert für Liechtenstein, Nutzungsart und Gebäudeart automatisch «Total»
+        self.assertEqual(r.units[r.values[0]], "Wohnungen")
+        self.assertTrue(any("nicht gleichbedeutend mit marktwirksamem Leerstand" in n for n in r.notes))   # Hinweis aus tab_wohnen.py
+        self.assertIn("391.131", r.sources[0][0])
+        self.assertTrue(r.sources[0][1].startswith("https://"))
+
+    def test_leerstandsquote_ruggell_server_rechnet(self):
+        s = {"queries": [{"id": "a", "dataset": "wohnungen_belegung", "filters": {"Gemeinde": ["Ruggell"], "Belegungsstatus": ["Am Stichtag nicht bewohnt"]}, "group_by": ["Jahr"]},
+                         {"id": "b", "dataset": "wohnungsbestand", "filters": {"Gemeinde": ["Ruggell"]}, "group_by": ["Jahr"]}],
+             "derive": [{"id": "c", "op": "ratio", "a": "a", "b": "b", "join": ["Jahr"], "per": 100, "label": "Anteil nicht bewohnt"}], "output": ["c"]}
+        r = D.execute(s, frames)
+        v = {x["Jahr"]: x["Anteil nicht bewohnt"] for x in r.rows}
+        self.assertAlmostEqual(v[2024], 95 / 1155 * 100)
+
+    def test_mieten_loader_stichtag_wird_jahr(self):
+        px = {"Bauen und Wohnen/Mietpreise/394.001d.px": _df(["Stichtag", "Zimmerzahl der Wohnungen", "Gemeinde", "Wert"], [("31.12.2020", "3 Zimmer", "Vaduz", 1500.0)]),
+              "Bauen und Wohnen/Mietpreise/394.101d.px": _df(["Stichtag", "Zimmerzahl der Wohnungen", "Gemeinde", "Wert"], [("31.12.2020", "3 Zimmer", "Vaduz", 1750.0)])}
+        old = D._px
+        D._px = lambda key: px[key].copy()
+        try:
+            df = D._load_mieten("zi", "Zimmerzahl der Wohnungen", "Zimmerzahl")()
+        finally:
+            D._px = old
+        self.assertEqual(sorted(df["Kennzahl"]), ["Bruttomiete", "Nettomiete"])
+        self.assertEqual(set(df["Jahr"]), {2020})
+        self.assertEqual(df[df["Kennzahl"] == "Nettomiete"]["Wert"].iloc[0], 1500.0)
+
+    def test_alle_datensaetze_haben_quelle_einheit_und_https_link(self):
+        reg = D.registry()
+        self.assertTrue({"wohnungen_belegung", "wohnungsbestand", "gebaeude", "mieten_zimmer", "mieten_flaeche", "baubewilligungen", "schulkinder", "einbuergerungen", "zuzug_wegzug"} <= set(reg))
+        for k, d in reg.items():
+            self.assertTrue(d.source and d.unit and d.title, k)
+            self.assertTrue(d.source_url.startswith("https://"), k)
+            for dim, tot in d.totals.items():
+                self.assertIn(dim, d.dims, k)
+        for k in ("wohnungen_belegung", "mieten_zimmer", "baubewilligungen"):
+            self.assertIn("Amt für Statistik", reg[k].source)
+            self.assertIn("CC BY", reg[k].source)                             # Lizenz in der Quellenangabe
 
     def test_total_nicht_doppelt_gezaehlt(self):
         r = D.execute({"queries": [{"dataset": "lohn_branche", "filters": {"Kennzahl": ["Median"]}, "group_by": ["Wirtschaftszweig"]}]}, frames)
@@ -487,6 +537,24 @@ class TestService(Base):
         self.assertIn("unterschiedlich abgegrenzt", b["answer"])
         self.assertEqual(len(m.calls), 2)
 
+    def test_keine_daten_meldung_nennt_themen_und_beispiel(self):
+        m = Mock([tool_use({"unavailable": "Kaufpreise Immobilien"})])
+        out = self.ask("Was kostet ein Haus in Vaduz?", mock=m)
+        b = out["body"]
+        self.assertTrue(b["no_data"])
+        self.assertIn("Kaufpreise Immobilien", b["answer"])
+        for t in ("Wohnen", "Löhne", "Bildung", "Migration", "Klima", "Wie viele Wohnungen waren 2024 in Ruggell nicht bewohnt?"):
+            self.assertIn(t, b["answer"])
+        self.assertIn("Wohnen", S.MSG_OFF)
+
+    def test_prompt_kennt_wohnen_und_leerstand_hinweis(self):
+        m = Mock([text("x")])
+        self.ask("Wie viele leere Wohnungen hatte Ruggell 2024?", mock=m)
+        sysm = m.calls[0]["system"]
+        self.assertIn("wohnungen_belegung", sysm)
+        self.assertIn("nicht marktwirksamer Leerstand", sysm)
+        self.assertIn("- wohnungen_belegung —", sysm)                        # Datensatz steht im Katalog
+
     def test_werkzeug_schleife_ist_begrenzt(self):
         bad = {"queries": [{"dataset": "gibt_es_nicht"}]}
         m = Mock([tool_use(bad, "t1"), tool_use(bad, "t2"), tool_use(bad, "t3")] * 3)
@@ -508,7 +576,7 @@ class TestService(Base):
         m = Mock([tool_use({"unavailable": "Sozialhilfe je Haushalt"})])
         b = self.ask("Sozialhilfe je Haushalt?", mock=m)["body"]
         self.assertTrue(b["no_data"])
-        self.assertIn("keine Daten", b["answer"])
+        self.assertIn("keine passenden Daten", b["answer"])
 
     def test_anbieterfehler_werden_nicht_verrechnet_timeout_schon(self):
         m = Mock([S.ProviderError("busy", "HTTP 529")])

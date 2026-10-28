@@ -266,7 +266,7 @@ sonst (gefälscht, fehlend, direkter Zugriff auf den lokalen Port) landet die An
 höchstens 30 Tage protokolliert (Bereinigung beim ersten Zugriff des Tages und täglich im Worker, `secure_delete`, montags VACUUM). Frage und Abfrageergebnis gehen an Anthropic (USA); Hinweis im Tab, in der Fusszeile und auf «Datenquellen».
 
 **Datensätze (Whitelist):** Wohnbevölkerung, sechs Lohn-Sichten (Branche, Wohnsitz, Alter, Voll-/Teilzeit, Staatsbürgerschaft, Unternehmensgrösse), Kosten Asylwesen (Landesrechnung Konto 590) und je Kopf, Asyl-Bestand, Ausgaben des Staates nach Funktion (501.031, auch
-«Soziale Sicherung»; Cache-Schlüssel `edu:spend_all`, der Worker spiegelt ihn wöchentlich) und fertig je Einwohner gerechnet (`staat_ausgaben_je_einwohner`, geteilt durch die Wohnbevölkerung am Jahresende; so braucht die Gegenüberstellung mit dem Asylaufwand je Kopf keine Rechnung des Modells), Polizei-Kennzahlen, Weltbank-Indikatoren, Klima je Gemeinde, Tourismus, PISA, Arbeitslosenquote, Beschäftigte. **Nicht vorhanden:** Sozialhilfe, AHV/IV-Renten und Krankenkassenprämien als eigene Reihen,
+«Soziale Sicherung»; Cache-Schlüssel `edu:spend_all`, der Worker spiegelt ihn wöchentlich) und fertig je Einwohner gerechnet (`staat_ausgaben_je_einwohner`, geteilt durch die Wohnbevölkerung am Jahresende; so braucht die Gegenüberstellung mit dem Asylaufwand je Kopf keine Rechnung des Modells), Polizei-Kennzahlen, Weltbank-Indikatoren, Klima je Gemeinde, Tourismus, PISA, Arbeitslosenquote, Beschäftigte. Wohnen (Amt für Statistik, opendata.li, CC BY): `wohnungen_belegung` (inkl. «Am Stichtag nicht bewohnt» je Gemeinde, immer mit dem Leerstand-Hinweis aus dem Tab Wohnen), `wohnungsbestand`, `gebaeude`, `mieten_zimmer`, `mieten_flaeche` (nur Volkszählung 2010/2015/2020), `baubewilligungen`; Bildung und Migration (Amt für Statistik): Schulkinder (auch nach Staatsbürgerschaft), Lernende, Studierende, Matura-Abschlüsse, Einbürgerungen, Ein-/Auswanderung, Asylgesuche, nichtständige Bevölkerung. **Nicht vorhanden:** Sozialhilfe, AHV/IV-Renten und Krankenkassenprämien als eigene Reihen,
 Beschäftigtenzahlen nach Branche und Geschlecht (deshalb keine Struktur-Zerlegung des Lohnunterschieds), Kosten je Asylgesuch.
 
 Tests: `python -m unittest discover -s tests -v` (Budget/Reservierung inkl. parallele Anfragen, Rate-Limits, Validator, Missbrauchsfälle, Routen; Mock-Anbieter, kein Schlüssel nötig).
@@ -326,3 +326,18 @@ blendet das Dashboard den POI-Abschnitt aus.
 
 **Render:** `render.yaml` ist nur noch Archiv der alten Einrichtung; Web-Service, Cron und Postgres bei Render
 werden nicht mehr gebraucht.
+
+**Noch nicht im Chat (Lückenliste, Stand 28.10.2026):**
+
+| Bereich | Datensätze | Warum (noch) nicht |
+|---|---|---|
+| Bildung | Klassen/Klassengrösse (481.003), Schulpersonal (481.202), Bildungsstand der Bevölkerung (491.002d) | sauber möglich (Amt für Statistik, CC BY), noch nicht aufgenommen |
+| Migration | Bevölkerung nach Altersjahr (211.006, ~28 000 Zeilen), Bevölkerungsszenarien (219.004d) | Altersjahr gross; Szenarien sind Projektionen, keine Beobachtung |
+| Migration (Vergleich) | Eurostat-Tabellen (Staatsangehörigkeit, Zu-/Abwanderung, Einbürgerung, Asylantragsteller, Straftäter, Arbeitslosigkeit nach Geburtsland), Weltbank-Migration | Länder-/Altersdimensionen und Lizenztext je Quelle noch nicht geprüft |
+| Lohn | Aufenthaltsstatus (291.031), Wohnort (291.041), Lohnverteilung (291.081), Vergleich Schweiz, Teuerung CH | sauber möglich, noch nicht aufgenommen |
+| Polizei | Tabellenzeilen aus den Jahresberichten (`police_delikte`) | Kennzahlen sind drin; die Tabellen sind unvollständig extrahiert |
+| Wirtschaft | Banken-Bilanz (363.101), F+E-Aufwendungen (371.003), FMA-Finanzmarktkennzahlen (Fondsvolumen, Deckungsgrad, Solvenz …), Eurostat-BIP | sauber möglich, Lizenz der FMA-Dateien noch nicht geprüft |
+| Factbook (CIA) | ~3 500 Textfelder | keine Zahlenreihen je Land; Ländervergleiche sind der Zweck des Tabs |
+| IWF | 15 SDMX-Datenflüsse (WEO, Wechselkurse, FSI, Direktinvestitionen, Klima …) | grosse, mehrdimensionale Tabellen; Nutzungsbedingungen noch nicht geprüft |
+| Open Data | Katalog (~500 Metadatensätze) | enthält keine Werte, nur Beschreibungen |
+| Umwelt | OSM-POI-Zahlen, Wetter-Monatswerte | ODbL-Namensnennung bzw. Jahreswerte schon im Datensatz `klima_jahr` |
