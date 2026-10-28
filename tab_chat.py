@@ -43,6 +43,7 @@ def render_chat():
             html.P(chat_notice_text(), style={**small, "marginBottom": "0"}),
         ]),
         html.Div(style={"height": "12px"}),
+        html.Div(id="chat-log", className="chat-log"),                                          # Verlauf chronologisch von oben nach unten, Eingabe darunter
         _card([
             html.Div([html.Button(e, className="chat-chip", **{"data-q": e}) for e in EXAMPLES], className="chat-chips"),
             html.Textarea(id="chat-input", className="chat-input", rows=3, maxLength=cfg.max_input_chars, placeholder="Deine Frage zu den Daten …"),
@@ -51,7 +52,6 @@ def render_chat():
                 html.Span(f"0 / {cfg.max_input_chars}", id="chat-counter", className="chat-counter", **{"data-max": str(cfg.max_input_chars)}),
             ], className="chat-actions"),
         ]),
-        html.Div(style={"height": "12px"}),
-        html.Div(id="chat-log", className="chat-log", **{"aria-live": "polite"}),
+        html.Div(className="chat-sr", role="status", **{"aria-live": "polite"}),                 # kurze Ansage für Screenreader
         dcc.Graph(figure={}, style={"display": "none"}, config={"staticPlot": True}),         # lädt plotly.js für die Diagramme der Antworten
     ], id="chat-root", **{"data-chat-root": "tab"})

@@ -35,7 +35,7 @@ MSG_NUMBERS = ("Die Zahlen stehen in der Tabelle. Der von der KI formulierte Tex
 NOTICE = ("Fragen werden gekürzt höchstens 30 Tage zur Missbrauchsabwehr gespeichert, ohne IP-Adresse. Die Frage und das Abfrageergebnis werden zur "
           "Beantwortung an Anthropic (USA) übermittelt; bitte keine persönlichen Angaben eingeben.")
 EXAMPLES = [
-    "Stelle die Sozialleistungskosten je Einwohner den Kosten der Asylbewerber pro Kopf gegenüber",
+    "Wie hat sich der Wohnungsbestand in Schaan seit 2000 entwickelt?",
     "Warum ist der Median der Männer höher als bei den Frauen?",
     "Wie hat sich die Wohnbevölkerung von Vaduz seit 2010 entwickelt?",
     "Wie viele Straftaten wurden in den letzten Jahren registriert?",

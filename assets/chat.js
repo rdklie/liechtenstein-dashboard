@@ -76,7 +76,7 @@
     function addMsg(root, cls) {
         var box = mk("div", "chat-msg " + cls);
         var l = q1(root, ".chat-log");
-        if (l) l.insertBefore(box, l.firstChild);
+        if (l) l.appendChild(box);                                  // chronologisch: neueste Nachricht unten
         return box;
     }
 
@@ -164,10 +164,21 @@
         if (inp && c) c.textContent = inp.value.length + " / " + (c.getAttribute("data-max") || "500");
     }
 
-    // Im Chat-Fenster liegt der Verlauf unter Begrüssung und Beispielfragen: neue Frage/Antwort an den Anfang des sichtbaren Bereichs holen
-    function scrollToLog(root) {
-        var body = q1(root, ".kk-panel-body"), log = q1(root, ".chat-log");
-        if (body && log) body.scrollTop += log.getBoundingClientRect().top - body.getBoundingClientRect().top - 6;
+    // Scrollen: beim Senden ans Ende (Frage und «Einen Moment …» sichtbar), bei der Antwort an ihren Anfang (nicht ans Ende einer langen Tabelle)
+    function scrollTo(root, el, where) {
+        var body = q1(root, ".kk-panel-body");
+        if (body) {                                                  // Chat-Fenster: eigener Scrollbereich
+            if (where === "end") body.scrollTop = body.scrollHeight;
+            else body.scrollTop += el.getBoundingClientRect().top - body.getBoundingClientRect().top - 6;
+        } else if (el.scrollIntoView) {                              // Chat-Tab: Seite
+            el.scrollIntoView({ block: where === "end" ? "nearest" : "start" });
+        }
+    }
+
+    // Kurze Ansage für Screenreader (statt den ganzen Verlauf samt Tabelle per aria-live vorlesen zu lassen)
+    function announce(root, text) {
+        var sr = q1(root, ".chat-sr");
+        if (sr) sr.textContent = text || "";
     }
 
     function ask(root, q) {
@@ -183,7 +194,8 @@
         var qb = addMsg(root, "chat-q"); qb.textContent = q;
         var status = 0;
         var box = addMsg(root, "chat-a"); box.appendChild(mk("p", "chat-wait", "Einen Moment …"));
-        scrollToLog(root);
+        announce(root, "Einen Moment …");
+        scrollTo(root, box, "end");
         fetch("/_chat/ask", {
             method: "POST", credentials: "same-origin",
             headers: { "Content-Type": "application/json", "X-Requested-With": "dli-chat" },
@@ -196,9 +208,14 @@
               box.textContent = "";
               if (body && body.ok) render(box, body, narrow);
               else box.appendChild(mk("p", "chat-error", (body && body.message) || "Die Frage konnte nicht beantwortet werden."));
-              scrollToLog(root);
+              announce(root, "Antwort: " + ((body && (body.answer || body.message)) || "siehe Verlauf"));
+              scrollTo(root, box, "start");
           })
-          .catch(function () { box.textContent = ""; box.appendChild(mk("p", "chat-error", "Keine Verbindung zum Server.")); })
+          .catch(function () {
+              box.textContent = ""; box.appendChild(mk("p", "chat-error", "Keine Verbindung zum Server."));
+              announce(root, "Keine Verbindung zum Server.");
+              scrollTo(root, box, "start");
+          })
           .then(function () {
               busy[k] = false; if (send) send.disabled = false;
               setKraki(root, status === 503 || status === 429 ? "sleeping" : "");      // nicht verfügbar / Kontingent oder Limit erreicht → Kraki schläft

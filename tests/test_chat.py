@@ -1180,6 +1180,47 @@ class TestKraki(unittest.TestCase):
         for k in ("width: 380px", "min(560px", "90dvh", "z-index: 1001", ".kk-panel[hidden]", "overflow-y: auto", ".kk-fab.kk-fab-open", "@media print { .kk-panel"):
             self.assertIn(k, css)
 
+    def test_verlauf_chronologisch_und_kurze_ansage(self):
+        core = self._read("assets", "chat.js")
+        self.assertNotIn("insertBefore", core)                               # nicht mehr neueste oben
+        self.assertIn("l.appendChild(box)", core)
+        self.assertIn('scrollTo(root, box, "end")', core)                    # beim Senden ans Ende
+        self.assertIn('scrollTo(root, box, "start")', core)                  # bei der Antwort an ihren Anfang
+        self.assertIn("scrollIntoView", core)
+        self.assertIn(".chat-sr", core)
+        import tab_chat
+        txt = repr(tab_chat.render_chat())
+        self.assertLess(txt.index("id='chat-log'"), txt.index("id='chat-input'"))   # Verlauf oben, Eingabe darunter
+        self.assertIn("chat-sr", txt)
+        self.assertIn("Div(id='chat-log', className='chat-log')", txt)               # kein aria-live am ganzen Verlauf samt Tabelle
+        ov = self._read("assets", "kraki_overlay.js")
+        self.assertIn('"chat-sr"', ov)
+        self.assertNotIn('log.setAttribute("aria-live"', ov)
+
+    def test_beispiele_ohne_heikles_thema(self):
+        import tab_chat
+        for e in list(S.EXAMPLES) + list(tab_chat.EXAMPLES):
+            self.assertNotIn("Asyl", e)
+            self.assertNotIn("Sozialleistung", e)
+        self.assertEqual(len(S.EXAMPLES), 4)
+        readme = self._read("README.md")
+        self.assertNotIn("Stelle die Sozialleistungskosten", readme)
+
+    def test_chatfenster_verschiebbar(self):
+        js = self._read("assets", "kraki_overlay.js")
+        css = self._read("assets", "kraki_overlay.css")
+        for k in ("pointerdown", "pointermove", "pointerup", "pointercancel", "setPointerCapture", 'closest("button, a")', "dblclick", "KEY_POS", 'window.addEventListener("resize", applyPos)',
+                  'matchMedia("(max-width: 640px)")', "Math.min(Math.max(0, left)", "Fensterposition zurücksetzen"):
+            self.assertIn(k, js)
+        self.assertIn("store(KEY_POS", js)                                    # nur sessionStorage mit try/catch (store())
+        for bad in ("localStorage", "document.cookie", ".innerHTML"):
+            self.assertNotIn(bad, js)
+        for k in ("cursor: grab", "touch-action: none", ".kk-panel-reset", "kk-panel-dragging"):
+            self.assertIn(k, css)
+        narrow = css[css.index("@media (max-width: 640px) {\n  .kk-panel-head"):]
+        self.assertIn("touch-action: auto", narrow)                          # im schmalen Layout kein Verschieben
+        self.assertIn("display: none !important", narrow)
+
     def test_overlay_css_anforderungen(self):
         css = self._read("assets", "kraki_overlay.css")
         for k in ("position: fixed", "env(safe-area-inset-bottom", "env(safe-area-inset-right", "z-index: 1000", "3.5s", "prefers-reduced-motion: reduce", "@media print", "width: 72px", "width: 56px", ":focus-visible"):

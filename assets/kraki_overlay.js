@@ -8,6 +8,7 @@
 (function () {
     var KEY_HIDDEN = "dli_kraki_hidden";
     var KEY_BUBBLE = "dli_kraki_bubble";
+    var KEY_POS = "dli_kraki_panel";                                   // Position des Chat-Fensters nach dem Verschieben (sessionStorage, nur Browser)
     var CHAT_URL = "/?tab=frage";
     var FALLBACK_NOTICE = "Fragen werden gekürzt höchstens 30 Tage zur Missbrauchsabwehr gespeichert, ohne IP-Adresse. Die Frage und das Abfrageergebnis werden zur Beantwortung an Anthropic (USA) übermittelt; bitte keine persönlichen Angaben eingeben.";
     var fab = null, link = null, panel = null;
@@ -44,6 +45,13 @@
         title.appendChild(mk("strong", "", "Frag Kraki"));
         title.appendChild(mk("span", "", "Fragen zu den Daten · KI"));
         head.appendChild(title);
+        var reset = mk("button", "kk-panel-reset", "↺");
+        reset.type = "button";
+        reset.hidden = true;                                           // nur sichtbar, solange das Fenster verschoben ist
+        reset.title = "Fensterposition zurücksetzen";
+        reset.setAttribute("aria-label", "Fensterposition zurücksetzen");
+        reset.addEventListener("click", resetPos);
+        head.appendChild(reset);
         var close = mk("button", "kk-panel-close", "×");
         close.type = "button";
         close.setAttribute("aria-label", "Chatfenster schliessen");
@@ -61,9 +69,11 @@
             chips.appendChild(c);
         });
         body.appendChild(chips);
-        var log = mk("div", "chat-log");
-        log.setAttribute("aria-live", "polite");
-        body.appendChild(log);
+        body.appendChild(mk("div", "chat-log"));
+        var sr = mk("div", "chat-sr");                                    // kurze Ansage für Screenreader statt aria-live am ganzen Verlauf
+        sr.setAttribute("role", "status");
+        sr.setAttribute("aria-live", "polite");
+        panel.appendChild(sr);
         panel.appendChild(body);
 
         var foot = mk("footer", "kk-panel-foot");
@@ -93,12 +103,89 @@
 
         document.body.appendChild(panel);
         if (window.DliChat) window.DliChat.fillSlots();
+        initDrag(head);
+    }
+
+    // ── Verschieben (Kopfzeile als Griff; Pointer Events für Maus und Touch) ─────
+    var moved = false;                                                  // Position weicht vom Standard ab
+
+    function narrow() { return window.matchMedia("(max-width: 640px)").matches; }   // schmales Layout: Fenster fast vollbreit, kein Verschieben
+
+    function clampPos(left, top) {
+        var r = panel.getBoundingClientRect();
+        return { left: Math.min(Math.max(0, left), Math.max(0, window.innerWidth - r.width)), top: Math.min(Math.max(0, top), Math.max(0, window.innerHeight - r.height)) };
+    }
+
+    function setPos(left, top) {
+        var p = clampPos(left, top);
+        panel.style.left = p.left + "px";
+        panel.style.top = p.top + "px";
+        panel.style.right = "auto";
+        panel.style.bottom = "auto";
+        moved = true;
+        var rb = panel.querySelector(".kk-panel-reset");
+        if (rb) rb.hidden = false;
+        return p;
+    }
+
+    function clearPos() {
+        ["left", "top", "right", "bottom"].forEach(function (k) { panel.style[k] = ""; });
+        moved = false;
+        var rb = panel.querySelector(".kk-panel-reset");
+        if (rb) rb.hidden = true;
+    }
+
+    function resetPos() {
+        try { window.sessionStorage.removeItem(KEY_POS); } catch (e) { /* ohne Speicher: nur nicht merken */ }
+        clearPos();
+    }
+
+    function applyPos() {                                               // gespeicherte Position anwenden bzw. nach Grössenänderung in den sichtbaren Bereich holen
+        if (!panel || panel.hidden) return;
+        if (narrow()) { clearPos(); return; }
+        if (moved) { var r = panel.getBoundingClientRect(); setPos(r.left, r.top); return; }
+        var saved = store(KEY_POS);
+        if (!saved) return;
+        var m = /^(-?\d+(?:\.\d+)?),(-?\d+(?:\.\d+)?)$/.exec(saved);
+        if (m) setPos(parseFloat(m[1]), parseFloat(m[2]));
+    }
+
+    function initDrag(head) {
+        var drag = null;
+        head.addEventListener("pointerdown", function (e) {
+            if (e.button !== 0 || narrow() || (e.target.closest && e.target.closest("button, a"))) return;   // Buttons in der Kopfzeile bleiben klickbar
+            var r = panel.getBoundingClientRect();
+            drag = { id: e.pointerId, dx: e.clientX - r.left, dy: e.clientY - r.top };
+            try { head.setPointerCapture(e.pointerId); } catch (err) { /* Capture nicht nötig */ }
+            panel.classList.add("kk-panel-dragging");
+            e.preventDefault();                                         // keine Textauswahl, kein Fokus-Wechsel durch den Griff
+        });
+        head.addEventListener("pointermove", function (e) {
+            if (!drag || e.pointerId !== drag.id) return;
+            setPos(e.clientX - drag.dx, e.clientY - drag.dy);
+        });
+        function end(e) {
+            if (!drag || e.pointerId !== drag.id) return;
+            drag = null;
+            panel.classList.remove("kk-panel-dragging");
+            if (moved) {
+                var r = panel.getBoundingClientRect();
+                store(KEY_POS, Math.round(r.left) + "," + Math.round(r.top));
+            }
+        }
+        head.addEventListener("pointerup", end);
+        head.addEventListener("pointercancel", end);
+        head.addEventListener("dblclick", function (e) {               // Doppelklick auf die Kopfzeile setzt zurück
+            if (e.target.closest && e.target.closest("button, a")) return;
+            resetPos();
+        });
     }
 
     function openPanel() {
         if (!panel) buildPanel();
         hideBubble();
         panel.hidden = false;
+        applyPos();
         fab.classList.add("kk-fab-open");
         link.setAttribute("aria-expanded", "true");
         if (window.DliChat) { window.DliChat.refreshCharts(panel); window.DliChat.setCounter(panel); }
@@ -178,6 +265,7 @@
         update();
         showBubbleLater();
         new MutationObserver(update).observe(document.getElementById("react-entry-point") || document.body, { childList: true, subtree: true });
+        window.addEventListener("resize", applyPos);                    // Position nach Grössenänderung wieder in den sichtbaren Bereich holen
         document.addEventListener("keydown", function (e) {
             if (e.key !== "Escape" || !panelOpen()) return;
             var a = document.activeElement;

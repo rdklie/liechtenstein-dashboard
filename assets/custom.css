@@ -649,3 +649,8 @@ hr.filter-hr {
 /* Chat-Tabellen: Zahlen und Jahre brechen nie zeichenweise um (auch im schmalen Chat-Fenster); breite Tabellen scrollen waagerecht */
 .chat-table td { white-space: nowrap; overflow-wrap: normal; word-break: normal; }
 .chat-table th { overflow-wrap: normal; word-break: normal; min-width: 5.5em; max-width: 15em; vertical-align: bottom; }
+
+/* Chat: Verlauf chronologisch (neueste unten); Abstand zur Eingabe nur, wenn schon Nachrichten da sind; kurze Screenreader-Ansage */
+.chat-log:not(:empty) { margin-bottom: 12px; }
+.chat-msg { scroll-margin-top: 8px; }
+.chat-sr { position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
