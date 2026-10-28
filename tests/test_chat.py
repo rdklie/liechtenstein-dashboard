@@ -527,6 +527,10 @@ class TestRoutes(Base):
         self.assertIn("HttpOnly", cookie)
         self.assertIn("Secure", cookie)
         self.assertIn("SameSite=Lax", cookie)
+        # hinter dem Proxy lautet Host «127.0.0.1:38517»; die erlaubte Herkunft entscheidet
+        S.set_provider(Mock([text("x")] * 5))
+        r2 = c.post("/_chat/ask", json={"q": "Hallo"}, headers={"Host": "127.0.0.1:38517", "Origin": "https://datenportal.li", "X-Forwarded-For": "9.9.9.9,203.0.113.5"})
+        self.assertEqual(r2.status_code, 200)
         # fremde Herkunft, fehlender Header, kein JSON, zu grosse Anfrage
         self.assertEqual(c.post("/_chat/ask", json={"q": "x"}, headers={"Host": "daten.li", "Origin": "https://evil.example"}).status_code, 403)
         self.assertEqual(c.post("/_chat/ask", json={"q": "x"}, headers={"Host": "daten.li"}).status_code, 403)

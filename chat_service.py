@@ -417,11 +417,11 @@ def register(server):
             r.headers["Cache-Control"] = "no-store"
             return r
 
-        host = (request.headers.get("Host") or "").lower()
+        # Hinter dem Proxy ist «Host» 127.0.0.1:<Port>; massgeblich ist der vom Browser gesetzte, nicht fälschbare Origin-Header (Cross-Site-Anfragen tragen die fremde Herkunft)
         origin = request.headers.get("Origin")
         if origin:
             oh = re.sub(r"^https?://", "", origin).lower()
-            if oh != host or (oh.split(":")[0] if oh.startswith(("localhost", "127.0.0.1")) else oh) not in ALLOWED_HOSTS:
+            if (oh.split(":")[0] if oh.startswith(("localhost", "127.0.0.1")) else oh) not in ALLOWED_HOSTS:
                 return reply({"ok": False, "message": "Anfrage abgelehnt."}, 403)
         elif request.headers.get("X-Requested-With") != "dli-chat":
             return reply({"ok": False, "message": "Anfrage abgelehnt."}, 403)
