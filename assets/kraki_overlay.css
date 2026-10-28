@@ -25,3 +25,34 @@
 @media (max-width: 640px) { .kk-fab { width: 56px; } .kk-bubble { max-width: 170px; font-size: 0.78rem; } }
 @media (prefers-reduced-motion: reduce) { .kk-fab-art, .kk-fab-link:hover, .kk-fab-link:focus-visible, .kk-bubble { animation: none !important; } .kk-bubble-off { transition: none; } }
 @media print { .kk-fab { display: none !important; } }
+
+/* Chat-Fenster am Overlay (nicht modal; über dem Kraki, unter Modals) */
+.kk-panel { position: fixed; z-index: 1001; right: calc(16px + env(safe-area-inset-right, 0px)); bottom: calc(16px + 72px + 12px + env(safe-area-inset-bottom, 0px));
+            width: 380px; height: min(560px, calc(100vh - 140px)); display: flex; flex-direction: column; background: #0D1117; color: #E6EDF3;
+            border: 1px solid #30363D; border-radius: 14px; box-shadow: 0 10px 34px rgba(0, 0, 0, 0.55); overflow: hidden; }
+.kk-panel[hidden] { display: none; }
+.kk-panel-head { display: flex; align-items: center; gap: 10px; padding: 8px 10px 8px 12px; background: #161B22; border-bottom: 1px solid #30363D; flex: 0 0 auto; }
+.kk-slot-sm { flex: 0 0 auto; width: 44px; min-height: 37px; }
+.kk-slot-sm svg { width: 100%; height: auto; display: block; overflow: visible; }
+.kk-panel-title { flex: 1 1 auto; display: flex; flex-direction: column; line-height: 1.25; min-width: 0; }
+.kk-panel-title strong { font-size: 0.98rem; }
+.kk-panel-title span { color: #8B949E; font-size: 0.74rem; }
+.kk-panel-close { width: 30px; height: 30px; border-radius: 8px; border: 1px solid #30363D; background: transparent; color: #C9D1D9; font-size: 20px; line-height: 26px; cursor: pointer; }
+.kk-panel-close:hover { background: #21262D; }
+.kk-panel-close:focus-visible, .kk-panel-full:focus-visible, .kk-panel .chat-chip:focus-visible, .kk-panel .chat-send:focus-visible, .kk-panel .chat-input:focus-visible { outline: 2px solid #58A6FF; outline-offset: 2px; }
+.kk-panel-body { flex: 1 1 auto; overflow-y: auto; overscroll-behavior: contain; padding: 10px 12px; min-height: 0; }
+.kk-panel-body .kk-greet { margin: 0 0 8px 0; }
+.kk-panel .chat-chip { font-size: 0.72rem; }
+.kk-panel .chat-msg { font-size: 0.84rem; padding: 8px 10px; }
+.kk-panel .chat-table { font-size: 0.74rem; }
+.kk-panel-foot { flex: 0 0 auto; padding: 8px 12px 10px; border-top: 1px solid #30363D; background: #0D1117; }
+.kk-panel .chat-input { font-size: 0.88rem; padding: 8px 10px; }
+.kk-panel .chat-actions { flex-wrap: wrap; gap: 8px; margin-top: 6px; }
+.kk-panel-full { margin-left: auto; font-size: 0.76rem; color: #58A6FF; }
+.kk-panel-note { margin: 6px 0 0 0; color: #8B949E; font-size: 0.68rem; line-height: 1.4; }
+
+@media (max-width: 640px) {
+  .kk-panel { left: 8px; right: 8px; width: auto; bottom: calc(8px + env(safe-area-inset-bottom, 0px)); height: 90vh; height: 90dvh; border-radius: 14px; }
+  .kk-fab.kk-fab-open { visibility: hidden; }                  /* das Fenster liegt über dem Kraki; × im Kopf schliesst */
+}
+@media print { .kk-panel { display: none !important; } }

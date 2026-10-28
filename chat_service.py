@@ -32,6 +32,14 @@ TOPICS = ("Bevölkerung, Wohnen (nicht bewohnte Wohnungen/Leerstand, Wohnungsbes
 MSG_OFF = ("Dazu kann ich nur Fragen zu den Daten auf daten.li beantworten. Der Chat kennt Daten zu: " + TOPICS + ". Bitte stelle eine Frage zu diesen Themen.")
 MSG_NUMBERS = ("Die Zahlen stehen in der Tabelle. Der von der KI formulierte Text wurde nicht angezeigt, weil er Zahlen enthielt, "
                "die nicht im Abfrageergebnis stehen.")
+NOTICE = ("Fragen werden gekürzt höchstens 30 Tage zur Missbrauchsabwehr gespeichert, ohne IP-Adresse. Die Frage und das Abfrageergebnis werden zur "
+          "Beantwortung an Anthropic (USA) übermittelt; bitte keine persönlichen Angaben eingeben.")
+EXAMPLES = [
+    "Stelle die Sozialleistungskosten je Einwohner den Kosten der Asylbewerber pro Kopf gegenüber",
+    "Warum ist der Median der Männer höher als bei den Frauen?",
+    "Wie hat sich die Wohnbevölkerung von Vaduz seit 2010 entwickelt?",
+    "Wie viele Straftaten wurden in den letzten Jahren registriert?",
+]
 MSG_DISABLED = "Die Funktion «Frage zu den Daten» ist derzeit nicht verfügbar."
 MSG_PROVIDER = "Die KI ist gerade nicht erreichbar. Bitte später erneut versuchen. Für diese Frage wurde nichts verrechnet."
 MSG_FAIL = "Die Frage konnte nicht beantwortet werden. Bitte anders formulieren oder die Frage einschränken."
@@ -508,7 +516,7 @@ def register(server):
         ip, trusted = client_ip(request, cfg)
         xff = request.headers.get("X-Forwarded-For", "")
         # ip_trusted/xff_hops: nur zur Kontrolle der Proxy-Kette (keine IP-Adresse)
-        r = jsonify({"enabled": bool(cfg.enabled and cfg.api_key), "max_chars": cfg.max_input_chars, "ip_trusted": trusted,
+        r = jsonify({"enabled": bool(cfg.enabled and cfg.api_key), "max_chars": cfg.max_input_chars, "notice": NOTICE, "examples": EXAMPLES, "ip_trusted": trusted,
                      "xff_hops": len([x for x in xff.split(",") if x.strip()]), "proxy_header": bool(request.headers.get("X-Dli-Proxy"))})
         r.headers["Cache-Control"] = "no-store"
         return r

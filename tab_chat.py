@@ -8,19 +8,14 @@ Alle Zahlen, Tabellen, Diagramme und Quellen kommen vom Server (chat_data), nich
 from dash import dcc, html
 
 import chat_budget as B
+import chat_service
 from ui import MUTED, TEXT, _card
 
-EXAMPLES = [
-    "Stelle die Sozialleistungskosten je Einwohner den Kosten der Asylbewerber pro Kopf gegenüber",
-    "Warum ist der Median der Männer höher als bei den Frauen?",
-    "Wie hat sich die Wohnbevölkerung von Vaduz seit 2010 entwickelt?",
-    "Wie viele Straftaten wurden in den letzten Jahren registriert?",
-]
+EXAMPLES = chat_service.EXAMPLES
 
 
 def chat_notice_text() -> str:
-    return ("Fragen werden gekürzt höchstens 30 Tage zur Missbrauchsabwehr gespeichert, ohne IP-Adresse. Die Frage und das Abfrageergebnis werden zur "
-            "Beantwortung an Anthropic (USA) übermittelt; bitte keine persönlichen Angaben eingeben.")
+    return chat_service.NOTICE
 
 
 def render_chat():
@@ -59,4 +54,4 @@ def render_chat():
         html.Div(style={"height": "12px"}),
         html.Div(id="chat-log", className="chat-log", **{"aria-live": "polite"}),
         dcc.Graph(figure={}, style={"display": "none"}, config={"staticPlot": True}),         # lädt plotly.js für die Diagramme der Antworten
-    ], id="chat-root")
+    ], id="chat-root", **{"data-chat-root": "tab"})

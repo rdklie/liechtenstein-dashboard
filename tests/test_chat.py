@@ -1070,7 +1070,7 @@ class TestKraki(unittest.TestCase):
 
     def test_js_schaltet_zustaende_und_laedt_nur_eigene_datei(self):
         js = self._read("assets", "chat.js")
-        self.assertIn('setKraki("thinking")', js)
+        self.assertIn('setKraki(root, "thinking")', js)
         self.assertIn('status === 503 || status === 429 ? "sleeping" : ""', js)
         self.assertIn('fetch("/assets/kraki.svg"', js)
         self.assertNotIn(".innerHTML", js)                                  # SVG kommt per DOMParser, nie als HTML-String
@@ -1094,11 +1094,46 @@ class TestKraki(unittest.TestCase):
         self.assertIn("sessionStorage", js)
         for bad in ("document.cookie", "localStorage", ".innerHTML", "XMLHttpRequest", "sendBeacon", "navigator.", "eval("):
             self.assertNotIn(bad, js)
-        self.assertEqual(js.count("fetch("), 2)                            # nur /_chat/status und /assets/kraki.svg
+        self.assertEqual(js.count("fetch("), 1)                            # nur /_chat/status; die Grafik lädt chat.js (window.DliChat.krakiSvg)
         self.assertIn('"Frag Kraki: Fragen zu den Daten"', js)
         self.assertIn("setTimeout(hideBubble, 8000)", js)
         self.assertIn("}, 3000);", js)
         self.assertIn('aria-hidden", "true"', js)                          # Blase kein Fokusfänger/Doppelansage
+
+    def test_chatfenster_js_anforderungen(self):
+        js = self._read("assets", "kraki_overlay.js")
+        core = self._read("assets", "chat.js")
+        self.assertIn('setAttribute("role", "dialog")', js)
+        self.assertNotIn("aria-modal", js)                                 # nicht modal: Seite dahinter bleibt bedienbar
+        self.assertIn('setAttribute("aria-label", "Frag Kraki")', js)
+        self.assertIn('e.key !== "Escape"', js)                            # Esc schliesst
+        self.assertIn("if (returnFocus) link.focus()", js)                 # Fokus zurück zu Kraki
+        self.assertIn("In eigenem Tab öffnen", js)                         # Fallback-Link zur Vollansicht
+        self.assertIn("ev.ctrlKey || ev.metaKey", js)                      # Strg/Cmd-Klick folgt dem Link
+        self.assertIn('"KI-Antwort, ungeprüft. "', js)
+        self.assertIn("window.DliChat", js)
+        self.assertIn("kk-slot", js)
+        self.assertIn("textarea", js)
+        # Chat-Logik gemeinsam in chat.js: Enter sendet, Umschalt+Enter Zeilenumbruch, Ausgabe nur per textContent
+        self.assertIn("e.shiftKey", core)
+        self.assertIn('data-chat-root', core)
+        self.assertNotIn(".innerHTML", core + js)
+        self.assertIn("/_chat/ask", core)
+        self.assertNotIn("/_chat/ask", js)                                 # das Fenster hat keine eigene API-Anbindung
+
+    def test_status_liefert_hinweis_und_beispiele_fuer_das_fenster(self):
+        import tab_chat
+        self.assertEqual(tab_chat.EXAMPLES, S.EXAMPLES)                    # Tab und Fenster zeigen dieselben Beispiele
+        self.assertEqual(tab_chat.chat_notice_text(), S.NOTICE)            # und denselben Datenschutzhinweis
+        self.assertIn("Anthropic (USA)", S.NOTICE)
+        self.assertIn("30 Tage", S.NOTICE)
+        txt = json.dumps(tab_chat.render_chat().to_plotly_json(), default=str)
+        self.assertIn('"data-chat-root": "tab"', txt)
+
+    def test_chatfenster_css_anforderungen(self):
+        css = self._read("assets", "kraki_overlay.css")
+        for k in ("width: 380px", "min(560px", "90dvh", "z-index: 1001", ".kk-panel[hidden]", "overflow-y: auto", ".kk-fab.kk-fab-open", "@media print { .kk-panel"):
+            self.assertIn(k, css)
 
     def test_overlay_css_anforderungen(self):
         css = self._read("assets", "kraki_overlay.css")
